@@ -4,41 +4,26 @@
 //! editor widget (raw/rendered/split views), CSV viewer, tree viewer,
 //! minimap, and navigation buttons.
 
+use super::helpers::{char_index_to_line_col, get_formatting_state_for, modifier_symbol};
+use super::types::{DeferredFormatAction, HeadingNavRequest};
 use super::FerriteApp;
-use super::types::{ DeferredFormatAction, HeadingNavRequest };
-use super::helpers::{ char_index_to_line_col, get_formatting_state_for, modifier_symbol };
-use crate::config::{ Theme, ViewMode };
+use crate::config::{Theme, ViewMode};
 use crate::editor::{
-    cleanup_ferrite_editor,
-    DocumentOutline,
-    EditorWidget,
-    FindReplacePanel,
-    Minimap,
-    SearchHighlights,
-    SemanticMinimap,
+    cleanup_ferrite_editor, DocumentOutline, EditorWidget, FindReplacePanel, Minimap,
+    SearchHighlights, SemanticMinimap,
 };
 use crate::markdown::{
-    apply_raw_format,
-    cleanup_rendered_editor_memory,
-    get_structured_file_type,
-    get_tabular_file_type,
-    CsvViewer,
-    CsvViewerState,
-    EditorMode,
-    FormattingState,
-    MarkdownEditor,
-    MarkdownFormatCommand,
-    TreeViewer,
-    TreeViewerState,
-    WikilinkContext,
+    apply_raw_format, cleanup_rendered_editor_memory, get_structured_file_type,
+    get_tabular_file_type, CsvViewer, CsvViewerState, EditorMode, FormattingState, MarkdownEditor,
+    MarkdownFormatCommand, TreeViewer, TreeViewerState, WikilinkContext,
 };
 #[allow(unused_imports)]
-use crate::preview::SyncScrollState;
-use crate::state::{ FileType, PendingAction, Selection, SpecialTabKind, TabKind };
+use crate::preview::{render_image_preview, SyncScrollState};
+use crate::state::{FileType, PendingAction, Selection, SpecialTabKind, TabKind};
 use crate::theme::ThemeColors;
-use crate::ui::{ FileOperationResult, FormatToolbar, GoToLineResult, RibbonAction };
+use crate::ui::{FileOperationResult, FormatToolbar, GoToLineResult, RibbonAction};
 use eframe::egui;
-use log::{ debug, info, trace, warn };
+use log::{debug, info, trace, warn};
 use rust_i18n::t;
 use std::collections::HashMap;
 
@@ -49,7 +34,7 @@ impl FerriteApp {
     pub(crate) fn render_central_panel(
         &mut self,
         ctx: &egui::Context,
-        is_dark: bool
+        is_dark: bool,
     ) -> Option<DeferredFormatAction> {
         let zen_mode = self.state.is_zen_mode();
         let mut deferred_format_action: Option<DeferredFormatAction> = None;
@@ -400,6 +385,18 @@ impl FerriteApp {
                     let Some((tab_id, view_mode, structured_type, tabular_type, transient_hl)) =
                         tab_info
                 {
+                    let active_file_type = self.state
+                        .active_tab()
+                        .map(|t| t.file_type())
+                        .unwrap_or(FileType::Unknown);
+
+                    if active_file_type.is_image() {
+                        if let Some(tab) = self.state.active_tab() {
+                            if let Some(path) = &tab.path {
+                                render_image_preview(ui, path);
+                            }
+                        }
+                    } else {
                     match view_mode {
                         ViewMode::Raw => {
                             // Raw mode: use the plain EditorWidget with optional minimap
@@ -1913,6 +1910,7 @@ impl FerriteApp {
                             }
                         }
                     }
+                    }
                 }
             } // End of else block (document tab rendering)
         });
@@ -1933,7 +1931,7 @@ impl FerriteApp {
                     &all_files,
                     recent_files,
                     &workspace.root_path,
-                    is_dark
+                    is_dark,
                 );
 
                 // Handle file selection
@@ -1950,7 +1948,8 @@ impl FerriteApp {
                         }
                         Err(e) => {
                             warn!("Failed to open file: {}", e);
-                            self.state.show_error(format!("Failed to open file:\n{}", e));
+                            self.state
+                                .show_error(format!("Failed to open file:\n{}", e));
                         }
                     }
                 }
@@ -2053,8 +2052,7 @@ impl FerriteApp {
                 let prev_cjk_preference = self.state.settings.cjk_font_preference;
                 let prev_language = self.state.settings.language;
 
-                let workspace_for_settings =
-                    self.state.workspace_root().map(|p| p.to_path_buf());
+                let workspace_for_settings = self.state.workspace_root().map(|p| p.to_path_buf());
                 let output = self.settings_panel.show_inline(
                     ui,
                     &mut self.state.settings,
@@ -2067,12 +2065,14 @@ impl FerriteApp {
                     self.theme_manager.apply(ui.ctx());
                     self.state.mark_settings_dirty();
 
-                    let font_changed =
-                        prev_font_family != self.state.settings.font_family ||
-                        prev_cjk_preference != self.state.settings.cjk_font_preference;
+                    let font_changed = prev_font_family != self.state.settings.font_family
+                        || prev_cjk_preference != self.state.settings.cjk_font_preference;
 
                     if font_changed {
-                        let custom_font = self.state.settings.font_family
+                        let custom_font = self
+                            .state
+                            .settings
+                            .font_family
                             .custom_name()
                             .map(|s| s.to_string());
                         crate::fonts::reload_fonts(
@@ -2086,7 +2086,10 @@ impl FerriteApp {
 
                     if prev_language != self.state.settings.language {
                         if let Some(cjk_pref) = self.state.settings.language.required_cjk_font() {
-                            let custom_font = self.state.settings.font_family
+                            let custom_font = self
+                                .state
+                                .settings
+                                .font_family
                                 .custom_name()
                                 .map(|s| s.to_string());
                             crate::fonts::preload_explicit_cjk_font_with_custom(
@@ -2094,7 +2097,10 @@ impl FerriteApp {
                                 cjk_pref,
                                 custom_font.as_deref(),
                             );
-                            info!("Loaded CJK fonts for language: {:?}", self.state.settings.language);
+                            info!(
+                                "Loaded CJK fonts for language: {:?}",
+                                self.state.settings.language
+                            );
                         }
                     }
                 }
@@ -2114,7 +2120,8 @@ impl FerriteApp {
                     );
 
                     let time = self.get_app_time();
-                    self.state.show_toast(t!("notification.settings_reset").to_string(), time, 2.0);
+                    self.state
+                        .show_toast(t!("notification.settings_reset").to_string(), time, 2.0);
                 }
             }
             SpecialTabKind::About => {
@@ -2138,7 +2145,10 @@ impl FerriteApp {
                     // labels rendered via i18n don't show as squares.
                     if prev_language != self.state.settings.language {
                         if let Some(cjk_pref) = self.state.settings.language.required_cjk_font() {
-                            let custom_font = self.state.settings.font_family
+                            let custom_font = self
+                                .state
+                                .settings
+                                .font_family
                                 .custom_name()
                                 .map(|s| s.to_string());
                             crate::fonts::preload_explicit_cjk_font_with_custom(
@@ -2146,7 +2156,10 @@ impl FerriteApp {
                                 cjk_pref,
                                 custom_font.as_deref(),
                             );
-                            info!("Loaded CJK fonts for language: {:?}", self.state.settings.language);
+                            info!(
+                                "Loaded CJK fonts for language: {:?}",
+                                self.state.settings.language
+                            );
                         }
                     }
 

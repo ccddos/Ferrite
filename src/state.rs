@@ -9,18 +9,18 @@
 #![allow(dead_code)]
 #![allow(clippy::redundant_closure)]
 
-use crate::config::{ load_config, save_config_silent, Settings, TabInfo, ViewMode };
+use crate::config::{load_config, save_config_silent, Settings, TabInfo, ViewMode};
 use crate::editor::{compute_edit_ops, EditHistory};
 use crate::lsp::{DiagnosticMap, LspManager};
 use crate::ui::TabPipelineState;
 use crate::vcs::GitService;
-use crate::workspaces::{ filter_events, AppMode, Workspace, WorkspaceEvent, WorkspaceWatcher };
-use log::{ debug, info, warn };
+use crate::workspaces::{filter_events, AppMode, Workspace, WorkspaceEvent, WorkspaceWatcher};
+use log::{debug, info, warn};
 use rust_i18n::t;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::{ Hash, Hasher };
-use std::path::{ Path, PathBuf };
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 
 /// File size threshold (bytes) above which a performance warning toast is shown on open.
 /// Kept as a constant for now; can be moved to settings later.
@@ -60,6 +60,8 @@ pub enum FileType {
     Csv,
     /// TSV files (.tsv)
     Tsv,
+    /// Image files rendered as read-only previews
+    Image,
     /// Unknown or unsupported file type
     Unknown,
 }
@@ -82,6 +84,7 @@ impl FileType {
             "toml" => Self::Toml,
             "csv" => Self::Csv,
             "tsv" => Self::Tsv,
+            "png" | "jpg" | "jpeg" | "gif" | "webp" => Self::Image,
             _ => Self::Unknown,
         }
     }
@@ -101,6 +104,11 @@ impl FileType {
         matches!(self, Self::Csv | Self::Tsv)
     }
 
+    /// Check if this is an image preview file type.
+    pub fn is_image(&self) -> bool {
+        matches!(self, Self::Image)
+    }
+
     /// Check if this file type supports split view (raw + rendered side-by-side).
     pub fn supports_split(&self) -> bool {
         self.is_markdown() || self.is_tabular()
@@ -115,6 +123,7 @@ impl FileType {
             Self::Toml => "TOML",
             Self::Csv => "CSV",
             Self::Tsv => "TSV",
+            Self::Image => "Image",
             Self::Unknown => "Unknown",
         }
     }
@@ -456,12 +465,16 @@ impl MultiCursor {
 
     /// Get the primary selection (for status bar, scroll anchoring).
     pub fn primary(&self) -> &Selection {
-        self.selections.get(self.primary_index).unwrap_or(&self.selections[0])
+        self.selections
+            .get(self.primary_index)
+            .unwrap_or(&self.selections[0])
     }
 
     /// Get a mutable reference to the primary selection.
     pub fn primary_mut(&mut self) -> &mut Selection {
-        let idx = self.primary_index.min(self.selections.len().saturating_sub(1));
+        let idx = self
+            .primary_index
+            .min(self.selections.len().saturating_sub(1));
         &mut self.selections[idx]
     }
 
@@ -702,7 +715,7 @@ impl FoldRegion {
         start_line: usize,
         end_line: usize,
         kind: FoldKind,
-        preview: String
+        preview: String,
     ) -> Self {
         Self {
             id,
@@ -721,7 +734,11 @@ impl FoldRegion {
 
     /// Get the number of hidden lines when collapsed.
     pub fn hidden_line_count(&self) -> usize {
-        if self.collapsed { self.end_line.saturating_sub(self.start_line) } else { 0 }
+        if self.collapsed {
+            self.end_line.saturating_sub(self.start_line)
+        } else {
+            0
+        }
     }
 
     /// Check if a line is within this fold region.
@@ -947,10 +964,7 @@ impl FoldState {
 
     /// Get the total number of hidden lines.
     pub fn hidden_line_count(&self) -> usize {
-        self.regions
-            .iter()
-            .map(|r| r.hidden_line_count())
-            .sum()
+        self.regions.iter().map(|r| r.hidden_line_count()).sum()
     }
 
     /// Get all lines that have fold indicators (start lines of regions).
@@ -999,16 +1013,14 @@ impl FoldState {
     /// `edit_line` is where the edit occurred, `delta` is the number of lines
     /// added (positive) or removed (negative).
     pub fn adjust_for_edit(&mut self, edit_line: usize, delta: isize) {
-        self.regions.retain_mut(|r| r.adjust_for_edit(edit_line, delta));
+        self.regions
+            .retain_mut(|r| r.adjust_for_edit(edit_line, delta));
         self.dirty = true;
     }
 
     /// Get the number of collapsed folds.
     pub fn collapsed_count(&self) -> usize {
-        self.regions
-            .iter()
-            .filter(|r| r.collapsed)
-            .count()
+        self.regions.iter().filter(|r| r.collapsed).count()
     }
 }
 
@@ -1180,7 +1192,7 @@ impl Tab {
     /// Compute a 64-bit hash of content for modification detection.
     fn compute_content_hash(content: &str) -> u64 {
         use std::collections::hash_map::DefaultHasher;
-        use std::hash::{ Hash, Hasher };
+        use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
         hasher.finish()
@@ -1216,7 +1228,7 @@ impl Tab {
             edit_history: EditHistory::new(),
             content_version: 0,
             file_type: FileType::Markdown, // New tabs default to markdown
-            needs_focus: true, // Auto-focus new tabs
+            needs_focus: true,             // Auto-focus new tabs
             transient_highlight: TransientHighlight::new(),
             auto_save_enabled: false, // Will be set from settings by caller
             last_edit_time: None,
@@ -1227,7 +1239,7 @@ impl Tab {
             detected_encoding: None, // New documents have no detected encoding
             original_bytes: Vec::new(), // No original bytes for new docs
             current_encoding: "utf-8", // Default to UTF-8 for new documents
-            had_bom: false, // New documents don't have a BOM
+            had_bom: false,          // New documents don't have a BOM
             pending_undo_snapshot: None,
         }
     }
@@ -1241,7 +1253,7 @@ impl Tab {
     pub fn new_with_settings(
         id: usize,
         auto_save_default: bool,
-        default_view_mode: ViewMode
+        default_view_mode: ViewMode,
     ) -> Self {
         let mut tab = Self::new(id);
         tab.auto_save_enabled = auto_save_default;
@@ -1334,25 +1346,29 @@ impl Tab {
         let encoding_label = detected.name();
 
         // Check for BOM first - encoding_rs handles this
-        let (content, actual_encoding, _had_errors, had_bom) = if
-            let Some((bom_encoding, bom_len)) = encoding_rs::Encoding::for_bom(&bytes)
-        {
-            // BOM detected, use that encoding and skip BOM bytes
-            // Use decode_without_bom_handling since we already handled the BOM
-            let (decoded, had_errors) = bom_encoding.decode_without_bom_handling(&bytes[bom_len..]);
-            (decoded.into_owned(), bom_encoding.name(), had_errors, true)
-        } else {
-            // No BOM, use detected encoding
-            let (decoded, _, had_errors) = detected.decode(&bytes);
-            (decoded.into_owned(), encoding_label, had_errors, false)
-        };
+        let (content, actual_encoding, _had_errors, had_bom) =
+            if let Some((bom_encoding, bom_len)) = encoding_rs::Encoding::for_bom(&bytes) {
+                // BOM detected, use that encoding and skip BOM bytes
+                // Use decode_without_bom_handling since we already handled the BOM
+                let (decoded, had_errors) =
+                    bom_encoding.decode_without_bom_handling(&bytes[bom_len..]);
+                (decoded.into_owned(), bom_encoding.name(), had_errors, true)
+            } else {
+                // No BOM, use detected encoding
+                let (decoded, _, had_errors) = detected.decode(&bytes);
+                (decoded.into_owned(), encoding_label, had_errors, false)
+            };
 
         let (original_content, original_content_hash, original_bytes) = if is_large_file {
             log::info!(
                 "Opening large file ({} bytes): using hash-based modification detection",
                 bytes_len
             );
-            (String::new(), Some(Self::compute_content_hash(&content)), Vec::new())
+            (
+                String::new(),
+                Some(Self::compute_content_hash(&content)),
+                Vec::new(),
+            )
         } else {
             (content.clone(), None, bytes)
         };
@@ -1417,7 +1433,7 @@ impl Tab {
         path: PathBuf,
         content: String,
         auto_save_default: bool,
-        default_view_mode: ViewMode
+        default_view_mode: ViewMode,
     ) -> Self {
         let mut tab = Self::with_file(id, path, content);
         tab.auto_save_enabled = auto_save_default;
@@ -1438,11 +1454,23 @@ impl Tab {
         path: PathBuf,
         bytes: Vec<u8>,
         auto_save_default: bool,
-        default_view_mode: ViewMode
+        default_view_mode: ViewMode,
     ) -> Self {
         let mut tab = Self::with_file_bytes(id, path, bytes);
         tab.auto_save_enabled = auto_save_default;
         tab.view_mode = default_view_mode;
+        tab
+    }
+
+    /// Create a read-only image preview tab from a file path.
+    pub fn with_image_file(id: usize, path: PathBuf, auto_save_default: bool) -> Self {
+        let mut tab = Self::with_file(id, path, String::new());
+        tab.file_type = FileType::Image;
+        tab.view_mode = ViewMode::Rendered;
+        tab.auto_save_enabled = auto_save_default;
+        tab.detected_encoding = None;
+        tab.current_encoding = "binary";
+        tab.original_bytes.clear();
         tab
     }
 
@@ -1452,16 +1480,14 @@ impl Tab {
     /// File type is detected from the path extension.
     /// Restored tabs don't auto-focus since we're restoring previous state.
     pub fn from_tab_info(id: usize, info: &TabInfo, content: String) -> Self {
-        let file_type = info.path
+        let file_type = info
+            .path
             .as_ref()
             .map(|p| FileType::from_path(p))
             .unwrap_or(FileType::Markdown);
         // Convert legacy cursor position to char index for MultiCursor
-        let cursor_char_idx = line_col_to_char_index(
-            &content,
-            info.cursor_position.0,
-            info.cursor_position.1
-        );
+        let cursor_char_idx =
+            line_col_to_char_index(&content, info.cursor_position.0, info.cursor_position.1);
 
         let is_large_file = content.len() >= LARGE_FILE_THRESHOLD;
         let (original_content, original_content_hash) = if is_large_file {
@@ -1522,7 +1548,7 @@ impl Tab {
         id: usize,
         info: &TabInfo,
         content: String,
-        auto_save_default: bool
+        auto_save_default: bool,
     ) -> Self {
         let mut tab = Self::from_tab_info(id, info, content);
         tab.auto_save_enabled = auto_save_default;
@@ -1538,11 +1564,12 @@ impl Tab {
         id: usize,
         info: &TabInfo,
         bytes: Vec<u8>,
-        auto_save_default: bool
+        auto_save_default: bool,
     ) -> Self {
         use chardetng::EncodingDetector;
 
-        let file_type = info.path
+        let file_type = info
+            .path
             .as_ref()
             .map(|p| FileType::from_path(p))
             .unwrap_or(FileType::Markdown);
@@ -1556,32 +1583,31 @@ impl Tab {
         let detected = detector.guess(None, true);
 
         // Check for BOM first
-        let (content, actual_encoding, had_bom) = if
-            let Some((bom_encoding, bom_len)) = encoding_rs::Encoding::for_bom(&bytes)
-        {
-            // Use decode_without_bom_handling since we already handled the BOM
-            let (decoded, _had_errors) = bom_encoding.decode_without_bom_handling(
-                &bytes[bom_len..]
-            );
-            (decoded.into_owned(), bom_encoding.name(), true)
-        } else {
-            let (decoded, _, _) = detected.decode(&bytes);
-            (decoded.into_owned(), detected.name(), false)
-        };
+        let (content, actual_encoding, had_bom) =
+            if let Some((bom_encoding, bom_len)) = encoding_rs::Encoding::for_bom(&bytes) {
+                // Use decode_without_bom_handling since we already handled the BOM
+                let (decoded, _had_errors) =
+                    bom_encoding.decode_without_bom_handling(&bytes[bom_len..]);
+                (decoded.into_owned(), bom_encoding.name(), true)
+            } else {
+                let (decoded, _, _) = detected.decode(&bytes);
+                (decoded.into_owned(), detected.name(), false)
+            };
 
         // Convert legacy cursor position to char index
-        let cursor_char_idx = line_col_to_char_index(
-            &content,
-            info.cursor_position.0,
-            info.cursor_position.1
-        );
+        let cursor_char_idx =
+            line_col_to_char_index(&content, info.cursor_position.0, info.cursor_position.1);
 
         let (original_content, original_content_hash, original_bytes) = if is_large_file {
             log::info!(
                 "Restoring large file ({} bytes): using hash-based modification detection",
                 bytes_len
             );
-            (String::new(), Some(Self::compute_content_hash(&content)), Vec::new())
+            (
+                String::new(),
+                Some(Self::compute_content_hash(&content)),
+                Vec::new(),
+            )
         } else {
             (content.clone(), None, bytes)
         };
@@ -1712,7 +1738,8 @@ impl Tab {
             return format!("{} {}", special.icon(), special.title());
         }
 
-        let name = self.path
+        let name = self
+            .path
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
@@ -1777,8 +1804,7 @@ impl Tab {
     /// not created new). For new documents, this just changes the save encoding.
     pub fn set_encoding(&mut self, new_encoding: &'static str) -> Result<(), String> {
         // Get the encoding from the label
-        let encoding = encoding_rs::Encoding
-            ::for_label(new_encoding.as_bytes())
+        let encoding = encoding_rs::Encoding::for_label(new_encoding.as_bytes())
             .ok_or_else(|| format!("Unknown encoding: {}", new_encoding))?;
 
         // If we have original bytes, re-decode the content
@@ -1854,8 +1880,7 @@ impl Tab {
         }
 
         // For all other encodings, use encoding_rs
-        let encoding = encoding_rs::Encoding
-            ::for_label(self.current_encoding.as_bytes())
+        let encoding = encoding_rs::Encoding::for_label(self.current_encoding.as_bytes())
             .unwrap_or(encoding_rs::UTF_8);
 
         let (encoded, _actual_encoding, _had_errors) = encoding.encode(&self.content);
@@ -2235,7 +2260,7 @@ impl Tab {
     pub fn find_next_occurrence(
         &self,
         search_text: &str,
-        after_pos: usize
+        after_pos: usize,
     ) -> Option<(usize, usize)> {
         if search_text.is_empty() {
             return None;
@@ -2405,12 +2430,13 @@ impl Tab {
         fold_headings: bool,
         fold_code_blocks: bool,
         fold_lists: bool,
-        fold_indentation: bool
+        fold_indentation: bool,
     ) {
         use crate::editor::folding::detect_fold_regions;
 
         // Remember currently collapsed fold positions
-        let collapsed_lines: std::collections::HashSet<usize> = self.fold_state
+        let collapsed_lines: std::collections::HashSet<usize> = self
+            .fold_state
             .regions()
             .iter()
             .filter(|r| r.collapsed)
@@ -2424,7 +2450,7 @@ impl Tab {
             fold_headings,
             fold_code_blocks,
             fold_lists,
-            fold_indentation
+            fold_indentation,
         );
 
         // Restore collapsed state for matching start lines
@@ -2483,12 +2509,14 @@ impl Tab {
 
     /// Fold all headings.
     pub fn fold_all_headings(&mut self) {
-        self.fold_state.fold_all_of_kind(|k| matches!(k, FoldKind::Heading(_)));
+        self.fold_state
+            .fold_all_of_kind(|k| matches!(k, FoldKind::Heading(_)));
     }
 
     /// Fold all code blocks.
     pub fn fold_all_code_blocks(&mut self) {
-        self.fold_state.fold_all_of_kind(|k| matches!(k, FoldKind::CodeBlock));
+        self.fold_state
+            .fold_all_of_kind(|k| matches!(k, FoldKind::CodeBlock));
     }
 
     /// Get the number of collapsed folds.
@@ -2738,7 +2766,7 @@ impl BacklinkIndex {
     pub fn scan_on_demand(
         target_filename: &str,
         files: &[PathBuf],
-        target_path: Option<&Path>
+        target_path: Option<&Path>,
     ) -> Vec<BacklinkEntry> {
         let target_key = normalize_filename(target_filename);
         let mut results = Vec::new();
@@ -2837,11 +2865,10 @@ fn extract_links_from_content(content: &str) -> Vec<String> {
         if let Some(close_paren) = after_paren.find(')') {
             let url = after_paren[..close_paren].trim();
             // Only match local .md links (not URLs)
-            if
-                !url.starts_with("http://") &&
-                !url.starts_with("https://") &&
-                !url.starts_with('#') &&
-                (url.ends_with(".md") || url.ends_with(".markdown"))
+            if !url.starts_with("http://")
+                && !url.starts_with("https://")
+                && !url.starts_with('#')
+                && (url.ends_with(".md") || url.ends_with(".markdown"))
             {
                 // Extract just the filename from the path
                 let filename = Path::new(url)
@@ -2902,7 +2929,10 @@ impl AppState {
     pub fn new() -> Self {
         let settings = load_config();
         info!("AppState initialized with settings");
-        debug!("Theme: {:?}, View mode: {:?}", settings.theme, settings.view_mode);
+        debug!(
+            "Theme: {:?}, View mode: {:?}",
+            settings.theme, settings.view_mode
+        );
 
         let mut state = Self {
             tabs: Vec::new(),
@@ -2968,7 +2998,7 @@ impl AppState {
                             self.next_tab_id,
                             tab_info,
                             bytes,
-                            auto_save_default
+                            auto_save_default,
                         );
                         let encoding = tab.current_encoding;
                         self.next_tab_id += 1;
@@ -3004,9 +3034,11 @@ impl AppState {
     /// Open the Welcome tab, or activate it if it already exists.
     pub fn show_welcome_tab(&mut self) {
         // If Welcome tab already exists, just activate it.
-        if let Some(i) = self.tabs.iter().position(|t| {
-            matches!(&t.kind, TabKind::Special(SpecialTabKind::Welcome))
-        }) {
+        if let Some(i) = self
+            .tabs
+            .iter()
+            .position(|t| matches!(&t.kind, TabKind::Special(SpecialTabKind::Welcome)))
+        {
             self.active_tab_index = i;
             return;
         }
@@ -3103,9 +3135,7 @@ impl AppState {
         self.active_tab_index = self.tabs.len() - 1;
         debug!(
             "Created new tab at index {} (auto-save: {}, view_mode: {:?})",
-            self.active_tab_index,
-            auto_save_default,
-            default_view_mode
+            self.active_tab_index, auto_save_default, default_view_mode
         );
         self.active_tab_index
     }
@@ -3116,13 +3146,16 @@ impl AppState {
     /// creating a duplicate. Returns the index of the (new or existing) tab.
     pub fn open_special_tab(&mut self, special_kind: SpecialTabKind) -> usize {
         // Check if a tab of this kind already exists
-        if
-            let Some(index) = self.tabs
-                .iter()
-                .position(|t| { matches!(&t.kind, TabKind::Special(k) if *k == special_kind) })
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|t| matches!(&t.kind, TabKind::Special(k) if *k == special_kind))
         {
             self.active_tab_index = index;
-            debug!("Focused existing special tab {:?} at index {}", special_kind, index);
+            debug!(
+                "Focused existing special tab {:?} at index {}",
+                special_kind, index
+            );
             return index;
         }
 
@@ -3133,7 +3166,10 @@ impl AppState {
         self.next_tab_id += 1;
         self.tabs.push(tab);
         self.active_tab_index = self.tabs.len() - 1;
-        debug!("Created special tab {:?} at index {}", special_kind, self.active_tab_index);
+        debug!(
+            "Created special tab {:?} at index {}",
+            special_kind, self.active_tab_index
+        );
         self.active_tab_index
     }
 
@@ -3145,7 +3181,7 @@ impl AppState {
     pub fn open_file(
         &mut self,
         path: PathBuf,
-        app_time: Option<f64>
+        app_time: Option<f64>,
     ) -> Result<usize, std::io::Error> {
         self.open_file_with_focus(path, true, app_time)
     }
@@ -3162,7 +3198,7 @@ impl AppState {
         &mut self,
         path: PathBuf,
         focus: bool,
-        app_time: Option<f64>
+        app_time: Option<f64>,
     ) -> Result<usize, std::io::Error> {
         // Check if file is already open
         if let Some(index) = self.find_tab_by_path(&path) {
@@ -3184,9 +3220,10 @@ impl AppState {
                     t!(
                         "notification.large_file_performance",
                         size = size_mb.to_string()
-                    ).to_string(),
+                    )
+                    .to_string(),
                     time,
-                    3.0
+                    3.0,
                 );
             }
         }
@@ -3194,17 +3231,39 @@ impl AppState {
         // Read file as bytes for encoding detection
         let bytes = std::fs::read(&path)?;
 
+        let file_type = FileType::from_path(&path);
+
+        if file_type.is_image() {
+            let auto_save_default = self.settings.auto_save_enabled_default;
+            let tab = Tab::with_image_file(self.next_tab_id, path.clone(), auto_save_default);
+            self.next_tab_id += 1;
+            self.tabs.push(tab);
+            let new_index = self.tabs.len() - 1;
+
+            if focus {
+                self.active_tab_index = new_index;
+                info!("Opened image preview: {}", path.display());
+            } else {
+                info!("Opened image preview in background: {}", path.display());
+            }
+
+            self.settings.add_recent_file(path.clone());
+            self.settings_dirty = true;
+            self.save_settings_if_dirty();
+
+            return Ok(new_index);
+        }
+
         // Check for binary files - we can't edit binary data as text
         if is_binary_content(&bytes) {
             let reason = binary_detection_reason(&bytes);
-            log::warn!(
-                "Cannot open binary file: {} ({})",
-                path.display(),
-                reason
-            );
+            log::warn!("Cannot open binary file: {} ({})", path.display(), reason);
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Binary file detected ({}). Use a specialized tool to edit this file.", reason)
+                format!(
+                    "Binary file detected ({}). Use a specialized tool to edit this file.",
+                    reason
+                ),
             ));
         }
 
@@ -3216,7 +3275,7 @@ impl AppState {
             path.clone(),
             bytes,
             auto_save_default,
-            default_view_mode
+            default_view_mode,
         );
 
         // If default view mode is Split but file type doesn't support it, fall back to Raw
@@ -3312,10 +3371,8 @@ impl AppState {
             if tab.should_prompt_to_save() {
                 // Set up confirmation dialog
                 self.ui.show_confirm_dialog = true;
-                self.ui.confirm_dialog_message = format!(
-                    "'{}' has unsaved changes. Close anyway?",
-                    tab.title()
-                );
+                self.ui.confirm_dialog_message =
+                    format!("'{}' has unsaved changes. Close anyway?", tab.title());
                 self.ui.pending_action = Some(PendingAction::CloseTab(index));
                 return false;
             }
@@ -3343,7 +3400,10 @@ impl AppState {
             self.active_tab_index -= 1;
         }
 
-        debug!("Closed tab {}, active is now {}", index, self.active_tab_index);
+        debug!(
+            "Closed tab {}, active is now {}",
+            index, self.active_tab_index
+        );
         true
     }
 
@@ -3373,13 +3433,9 @@ impl AppState {
             .active_tab_mut()
             .ok_or_else(|| crate::error::Error::Application("No active tab".to_string()))?;
 
-        let path = tab.path
-            .clone()
-            .ok_or_else(|| {
-                crate::error::Error::Application(
-                    "No file path set. Use 'Save As' instead.".to_string()
-                )
-            })?;
+        let path = tab.path.clone().ok_or_else(|| {
+            crate::error::Error::Application("No file path set. Use 'Save As' instead.".to_string())
+        })?;
 
         // Encode content using the tab's current encoding
         let encoded_bytes = tab.encode_content();
@@ -3450,11 +3506,10 @@ impl AppState {
     /// Returns `Ok(())` if successful, or an error if the folder can't be opened.
     pub fn open_workspace(&mut self, root: PathBuf) -> Result<(), crate::error::Error> {
         if !root.is_dir() {
-            return Err(
-                crate::error::Error::Application(
-                    format!("Path is not a directory: {}", root.display())
-                )
-            );
+            return Err(crate::error::Error::Application(format!(
+                "Path is not a directory: {}",
+                root.display()
+            )));
         }
 
         info!("Opening workspace: {}", root.display());
@@ -3604,7 +3659,10 @@ impl AppState {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Update settings and mark as dirty.
-    pub fn update_settings<F>(&mut self, f: F) where F: FnOnce(&mut Settings) {
+    pub fn update_settings<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut Settings),
+    {
         f(&mut self.settings);
         self.settings_dirty = true;
     }
@@ -3620,7 +3678,8 @@ impl AppState {
     pub fn save_settings_if_dirty(&mut self) -> bool {
         if self.settings_dirty {
             // Update session restoration data (skip special tabs like settings/about)
-            self.settings.last_open_tabs = self.tabs
+            self.settings.last_open_tabs = self
+                .tabs
                 .iter()
                 .filter(|t| !t.is_special())
                 .map(|t| t.to_tab_info())
@@ -3652,9 +3711,10 @@ impl AppState {
     /// This creates a complete snapshot of the current editor session,
     /// including all open tabs, their content state, and editor positions.
     pub fn capture_session_state(&self) -> crate::config::SessionState {
-        use crate::config::{ hash_content, SessionAppMode, SessionState, SessionTabState };
+        use crate::config::{hash_content, SessionAppMode, SessionState, SessionTabState};
 
-        let tabs: Vec<SessionTabState> = self.tabs
+        let tabs: Vec<SessionTabState> = self
+            .tabs
             .iter()
             .map(|tab| {
                 let file_mtime = tab.path.as_ref().and_then(|p| Self::get_file_mtime(p));
@@ -3705,8 +3765,7 @@ impl AppState {
 
         SessionState {
             version: 1,
-            saved_at: std::time::SystemTime
-                ::now()
+            saved_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
@@ -3742,7 +3801,7 @@ impl AppState {
     /// Returns `true` if any tabs were restored.
     pub fn restore_from_session_result(
         &mut self,
-        result: &crate::config::SessionRestoreResult
+        result: &crate::config::SessionRestoreResult,
     ) -> bool {
         let Some(session) = &result.session else {
             return false;
@@ -3766,11 +3825,8 @@ impl AppState {
                     ResolvedContent::Recovered(content) => {
                         // Recovery content is UTF-8
                         if let Some(path) = &session_tab.path {
-                            let mut t = Tab::with_file(
-                                self.next_tab_id,
-                                path.clone(),
-                                content.clone()
-                            );
+                            let mut t =
+                                Tab::with_file(self.next_tab_id, path.clone(), content.clone());
                             // Set encoding to UTF-8 for recovered content
                             t.detected_encoding = Some("utf-8");
                             t.current_encoding = "utf-8";
@@ -3781,28 +3837,30 @@ impl AppState {
                             t
                         }
                     }
-                    ResolvedContent::FromDisk { content, original_bytes, encoding, had_bom } => {
+                    ResolvedContent::FromDisk {
+                        content,
+                        original_bytes,
+                        encoding,
+                        had_bom,
+                    } => {
                         if let Some(path) = &session_tab.path {
                             let file_type = FileType::from_path(path);
                             let is_large_file = content.len() >= LARGE_FILE_THRESHOLD;
 
-                            let (
-                                original_content_str,
-                                original_content_hash,
-                                final_original_bytes,
-                            ) = if is_large_file {
-                                log::info!(
+                            let (original_content_str, original_content_hash, final_original_bytes) =
+                                if is_large_file {
+                                    log::info!(
                                     "Restoring large file from disk ({} bytes): using hash-based modification detection",
                                     content.len()
                                 );
-                                (
-                                    String::new(),
-                                    Some(Tab::compute_content_hash(&content)),
-                                    Vec::new(),
-                                )
-                            } else {
-                                (content.clone(), None, original_bytes)
-                            };
+                                    (
+                                        String::new(),
+                                        Some(Tab::compute_content_hash(&content)),
+                                        Vec::new(),
+                                    )
+                                } else {
+                                    (content.clone(), None, original_bytes)
+                                };
 
                             let edit_history = if is_large_file {
                                 EditHistory::with_max_groups(LARGE_FILE_MAX_UNDO_GROUPS)
@@ -3866,18 +3924,18 @@ impl AppState {
                 tab.scroll_offset = session_tab.scroll_offset;
 
                 // Restore cursor from char index
-                tab.cursors.set_single(
-                    crate::state::Selection::cursor(session_tab.cursor_char_index)
-                );
+                tab.cursors.set_single(crate::state::Selection::cursor(
+                    session_tab.cursor_char_index,
+                ));
                 if let Some((start, end)) = session_tab.selection {
-                    tab.cursors.set_single(crate::state::Selection::new(start, end));
+                    tab.cursors
+                        .set_single(crate::state::Selection::new(start, end));
                 }
                 tab.sync_cursor_from_primary();
 
                 // If we loaded from recovery content, mark as modified
-                if
-                    session_tab.has_unsaved_content &&
-                    result.recovered_content.contains_key(&session_tab.tab_id)
+                if session_tab.has_unsaved_content
+                    && result.recovered_content.contains_key(&session_tab.tab_id)
                 {
                     // Content was recovered - it's modified relative to what's on disk
                     // The original_content field stays as the disk version
@@ -3888,14 +3946,12 @@ impl AppState {
 
                 debug!(
                     "Restored tab {} from session: {}",
-                    session_tab.tab_id,
-                    session_tab.display_title
+                    session_tab.tab_id, session_tab.display_title
                 );
             } else {
                 warn!(
                     "Could not restore tab {}: {}",
-                    session_tab.tab_id,
-                    session_tab.display_title
+                    session_tab.tab_id, session_tab.display_title
                 );
             }
         }
@@ -3927,7 +3983,11 @@ impl AppState {
                     .canonicalize()
                     .map(crate::path_utils::normalize_path)
                     .unwrap_or_else(|e| {
-                        debug!("Could not canonicalize workspace path {}: {}", root.display(), e);
+                        debug!(
+                            "Could not canonicalize workspace path {}: {}",
+                            root.display(),
+                            e
+                        );
                         root.clone()
                     });
 
@@ -4002,7 +4062,7 @@ impl AppState {
     fn resolve_tab_content(
         &self,
         session_tab: &crate::config::SessionTabState,
-        result: &crate::config::SessionRestoreResult
+        result: &crate::config::SessionRestoreResult,
     ) -> Option<ResolvedContent> {
         use chardetng::EncodingDetector;
 
@@ -4010,8 +4070,7 @@ impl AppState {
         if let Some(recovered) = result.recovered_content.get(&session_tab.tab_id) {
             debug!(
                 "Using recovered content for tab {} ({})",
-                session_tab.tab_id,
-                session_tab.display_title
+                session_tab.tab_id, session_tab.display_title
             );
             return Some(ResolvedContent::Recovered(recovered.clone()));
         }
@@ -4027,15 +4086,12 @@ impl AppState {
                         let detected = detector.guess(None, true);
 
                         // Check for BOM first
-                        let (content, encoding, had_bom) = if
-                            let Some((bom_encoding, bom_len)) = encoding_rs::Encoding::for_bom(
-                                &bytes
-                            )
+                        let (content, encoding, had_bom) = if let Some((bom_encoding, bom_len)) =
+                            encoding_rs::Encoding::for_bom(&bytes)
                         {
                             // Use decode_without_bom_handling since we already handled the BOM
-                            let (decoded, _had_errors) = bom_encoding.decode_without_bom_handling(
-                                &bytes[bom_len..]
-                            );
+                            let (decoded, _had_errors) =
+                                bom_encoding.decode_without_bom_handling(&bytes[bom_len..]);
                             (decoded.into_owned(), bom_encoding.name(), true)
                         } else {
                             let (decoded, _, _) = detected.decode(&bytes);
@@ -4044,9 +4100,7 @@ impl AppState {
 
                         debug!(
                             "Loaded content from disk for tab {} (encoding: {}, had_bom: {})",
-                            session_tab.tab_id,
-                            encoding,
-                            had_bom
+                            session_tab.tab_id, encoding, had_bom
                         );
                         return Some(ResolvedContent::FromDisk {
                             content,
@@ -4069,7 +4123,10 @@ impl AppState {
 
         // For tabs without a path (unsaved documents), we need recovery content
         if session_tab.path.is_none() && session_tab.has_unsaved_content {
-            debug!("Unsaved document {} has no recovery content", session_tab.tab_id);
+            debug!(
+                "Unsaved document {} has no recovery content",
+                session_tab.tab_id
+            );
             return None;
         }
 
@@ -4078,8 +4135,7 @@ impl AppState {
 
     /// Get file modification time as Unix timestamp.
     fn get_file_mtime(path: &std::path::Path) -> Option<u64> {
-        std::fs
-            ::metadata(path)
+        std::fs::metadata(path)
             .ok()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -4317,14 +4373,26 @@ mod tests {
 
     #[test]
     fn test_file_type_from_path() {
-        assert_eq!(FileType::from_path(Path::new("readme.md")), FileType::Markdown);
-        assert_eq!(FileType::from_path(Path::new("config.json")), FileType::Json);
-        assert_eq!(FileType::from_path(Path::new("docker-compose.yaml")), FileType::Yaml);
+        assert_eq!(
+            FileType::from_path(Path::new("readme.md")),
+            FileType::Markdown
+        );
+        assert_eq!(
+            FileType::from_path(Path::new("config.json")),
+            FileType::Json
+        );
+        assert_eq!(
+            FileType::from_path(Path::new("docker-compose.yaml")),
+            FileType::Yaml
+        );
         assert_eq!(FileType::from_path(Path::new("Cargo.toml")), FileType::Toml);
         assert_eq!(FileType::from_path(Path::new("data.csv")), FileType::Csv);
         assert_eq!(FileType::from_path(Path::new("data.tsv")), FileType::Tsv);
         assert_eq!(FileType::from_path(Path::new("main.rs")), FileType::Unknown);
-        assert_eq!(FileType::from_path(Path::new("no_extension")), FileType::Unknown);
+        assert_eq!(
+            FileType::from_path(Path::new("no_extension")),
+            FileType::Unknown
+        );
     }
 
     #[test]
@@ -4344,7 +4412,11 @@ mod tests {
         assert!(FileType::Tsv.is_tabular());
         assert!(!FileType::Json.is_tabular());
         assert!(!FileType::Markdown.is_tabular());
+        assert!(!FileType::Image.is_tabular());
         assert!(!FileType::Unknown.is_tabular());
+
+        assert!(FileType::Image.is_image());
+        assert!(!FileType::Markdown.is_image());
 
         assert_eq!(FileType::Markdown.display_name(), "Markdown");
         assert_eq!(FileType::Json.display_name(), "JSON");
@@ -4352,6 +4424,7 @@ mod tests {
         assert_eq!(FileType::Toml.display_name(), "TOML");
         assert_eq!(FileType::Csv.display_name(), "CSV");
         assert_eq!(FileType::Tsv.display_name(), "TSV");
+        assert_eq!(FileType::Image.display_name(), "Image");
         assert_eq!(FileType::Unknown.display_name(), "Unknown");
     }
 
@@ -4402,7 +4475,9 @@ mod tests {
         assert!(!is_binary_content(b"Tab:\t Newline:\n CR:\r"));
 
         // But many control characters indicate binary
-        let binary_with_control = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x0B, 0x0C, 0x0E, 0x0F];
+        let binary_with_control = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x0B, 0x0C, 0x0E, 0x0F,
+        ];
         assert!(is_binary_content(&binary_with_control));
     }
 
@@ -4411,7 +4486,9 @@ mod tests {
         // Simulate PNG header - contains bytes that are control chars
         // PNG signature: 89 50 4E 47 0D 0A 1A 0A
         // 0x89, 0x1A are considered control characters (non-printable)
-        let png_like = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D];
+        let png_like = [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+        ];
         assert!(is_binary_content(&png_like));
 
         // Simulate a binary file with high non-printable ratio
@@ -4569,20 +4646,14 @@ mod tests {
         assert!(!existing_empty.should_prompt_to_save());
 
         // Case 7: Existing empty file modified - prompt
-        let mut existing_empty_modified = Tab::with_file(
-            6,
-            PathBuf::from("empty.md"),
-            String::new()
-        );
+        let mut existing_empty_modified =
+            Tab::with_file(6, PathBuf::from("empty.md"), String::new());
         existing_empty_modified.set_content("now has content".to_string());
         assert!(existing_empty_modified.should_prompt_to_save());
 
         // Case 8: Saved file, content deleted entirely - prompt (modified)
-        let mut saved_then_cleared = Tab::with_file(
-            7,
-            PathBuf::from("content.md"),
-            "original".to_string()
-        );
+        let mut saved_then_cleared =
+            Tab::with_file(7, PathBuf::from("content.md"), "original".to_string());
         saved_then_cleared.set_content(String::new());
         assert!(saved_then_cleared.should_prompt_to_save());
     }
@@ -5107,7 +5178,7 @@ mod tests {
             cursor_position: (10, 5),
             scroll_offset: 100.0,
             view_mode: ViewMode::Rendered, // Test restoring rendered mode
-            split_ratio: 0.6, // Test restoring split ratio
+            split_ratio: 0.6,              // Test restoring split ratio
         };
         let content = "# Test Content".to_string();
 
@@ -5198,7 +5269,8 @@ mod tests {
 
         // Write the test file
         let mut file = std::fs::File::create(&temp_file).expect("Failed to create temp file");
-        file.write_all(test_content.as_bytes()).expect("Failed to write temp file");
+        file.write_all(test_content.as_bytes())
+            .expect("Failed to write temp file");
         drop(file);
 
         // Set up settings with this file (with Rendered view mode)
@@ -5238,8 +5310,14 @@ mod tests {
         let temp_file2 = temp_dir.join("ferrite_test_restore2.md");
 
         // Write test files
-        std::fs::File::create(&temp_file1).unwrap().write_all(b"# File 1").unwrap();
-        std::fs::File::create(&temp_file2).unwrap().write_all(b"# File 2").unwrap();
+        std::fs::File::create(&temp_file1)
+            .unwrap()
+            .write_all(b"# File 1")
+            .unwrap();
+        std::fs::File::create(&temp_file2)
+            .unwrap()
+            .write_all(b"# File 2")
+            .unwrap();
 
         let mut settings = Settings::default();
         settings.last_open_tabs = vec![
@@ -5258,7 +5336,7 @@ mod tests {
                 scroll_offset: 0.0,
                 view_mode: ViewMode::Rendered, // Second tab in rendered mode
                 split_ratio: 0.5,
-            }
+            },
         ];
         settings.active_tab_index = 1; // Second tab active
 
@@ -5285,7 +5363,10 @@ mod tests {
         let temp_file = temp_dir.join("ferrite_test_restore_partial.md");
 
         // Write only one test file
-        std::fs::File::create(&temp_file).unwrap().write_all(b"# Existing File").unwrap();
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"# Existing File")
+            .unwrap();
 
         let mut settings = Settings::default();
         settings.last_open_tabs = vec![
@@ -5304,7 +5385,7 @@ mod tests {
                 scroll_offset: 0.0,
                 view_mode: ViewMode::Rendered,
                 split_ratio: 0.5,
-            }
+            },
         ];
         settings.active_tab_index = 1;
 
@@ -5330,7 +5411,10 @@ mod tests {
 
         let temp_dir = std::env::temp_dir();
         let temp_file = temp_dir.join("ferrite_test_open_focus_true.md");
-        std::fs::File::create(&temp_file).unwrap().write_all(b"# Test Content").unwrap();
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"# Test Content")
+            .unwrap();
 
         let mut state = AppState::with_settings(Settings::default());
         let initial_tab_count = state.tab_count();
@@ -5354,7 +5438,10 @@ mod tests {
 
         let temp_dir = std::env::temp_dir();
         let temp_file = temp_dir.join("ferrite_test_open_focus_false.md");
-        std::fs::File::create(&temp_file).unwrap().write_all(b"# Background File").unwrap();
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"# Background File")
+            .unwrap();
 
         let mut state = AppState::with_settings(Settings::default());
         let initial_active_index = state.active_tab_index();
@@ -5376,12 +5463,39 @@ mod tests {
     }
 
     #[test]
+    fn test_open_image_file_as_preview() {
+        use std::io::Write;
+
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("ferrite_test_image_preview.png");
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(include_bytes!("../assets/icons/icon_256.png"))
+            .unwrap();
+
+        let mut state = AppState::with_settings(Settings::default());
+        let result = state.open_file_with_focus(temp_file.clone(), true, None);
+
+        let _ = std::fs::remove_file(&temp_file);
+
+        assert!(result.is_ok());
+        let tab = state.active_tab().unwrap();
+        assert_eq!(tab.file_type(), FileType::Image);
+        assert_eq!(tab.view_mode, ViewMode::Rendered);
+        assert!(tab.content.is_empty());
+        assert_eq!(tab.current_encoding, "binary");
+    }
+
+    #[test]
     fn test_open_file_already_open_with_focus() {
         use std::io::Write;
 
         let temp_dir = std::env::temp_dir();
         let temp_file = temp_dir.join("ferrite_test_already_open.md");
-        std::fs::File::create(&temp_file).unwrap().write_all(b"# Already Open").unwrap();
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"# Already Open")
+            .unwrap();
 
         let mut state = AppState::with_settings(Settings::default());
 
@@ -5414,7 +5528,10 @@ mod tests {
 
         let temp_dir = std::env::temp_dir();
         let temp_file = temp_dir.join("ferrite_test_already_open_no_focus.md");
-        std::fs::File::create(&temp_file).unwrap().write_all(b"# Already Open No Focus").unwrap();
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"# Already Open No Focus")
+            .unwrap();
 
         let mut state = AppState::with_settings(Settings::default());
 
@@ -5448,7 +5565,10 @@ mod tests {
 
         let temp_dir = std::env::temp_dir();
         let temp_file = temp_dir.join("ferrite_test_recent_update.md");
-        std::fs::File::create(&temp_file).unwrap().write_all(b"# Recent Test").unwrap();
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"# Recent Test")
+            .unwrap();
 
         let mut state = AppState::with_settings(Settings::default());
         assert!(state.settings.recent_files.is_empty());
@@ -5548,14 +5668,15 @@ mod tests {
         let file_b = temp_dir.join("note-b.md");
         let file_c = temp_dir.join("note-c.md");
 
-        std::fs::File
-            ::create(&file_a)
+        std::fs::File::create(&file_a)
             .unwrap()
             .write_all(b"# Note A\nLinks to [[note-b]] here.")
             .unwrap();
-        std::fs::File::create(&file_b).unwrap().write_all(b"# Note B\nStandalone note.").unwrap();
-        std::fs::File
-            ::create(&file_c)
+        std::fs::File::create(&file_b)
+            .unwrap()
+            .write_all(b"# Note B\nStandalone note.")
+            .unwrap();
+        std::fs::File::create(&file_c)
             .unwrap()
             .write_all(b"# Note C\nAlso links to [[note-b]] and [text](note-a.md).")
             .unwrap();
@@ -5595,12 +5716,14 @@ mod tests {
         let file_a = temp_dir.join("note-a.md");
         let file_b = temp_dir.join("note-b.md");
 
-        std::fs::File
-            ::create(&file_a)
+        std::fs::File::create(&file_a)
             .unwrap()
             .write_all(b"# Note A\nLinks to [[note-b]].")
             .unwrap();
-        std::fs::File::create(&file_b).unwrap().write_all(b"# Note B").unwrap();
+        std::fs::File::create(&file_b)
+            .unwrap()
+            .write_all(b"# Note B")
+            .unwrap();
 
         let files = vec![file_a.clone(), file_b.clone()];
 
@@ -5610,7 +5733,10 @@ mod tests {
         assert_eq!(index.get_backlinks("note-b").len(), 1);
 
         // Update file_a to remove the link
-        std::fs::File::create(&file_a).unwrap().write_all(b"# Note A\nNo more links.").unwrap();
+        std::fs::File::create(&file_a)
+            .unwrap()
+            .write_all(b"# Note A\nNo more links.")
+            .unwrap();
 
         index.update_file(&file_a);
 
@@ -5632,17 +5758,18 @@ mod tests {
         let file_b = temp_dir.join("note-b.md");
         let file_c = temp_dir.join("note-c.md");
 
-        std::fs::File
-            ::create(&file_a)
+        std::fs::File::create(&file_a)
             .unwrap()
             .write_all(b"# Note A\nLinks to [[note-c]].")
             .unwrap();
-        std::fs::File
-            ::create(&file_b)
+        std::fs::File::create(&file_b)
             .unwrap()
             .write_all(b"# Note B\nAlso links to [[note-c|See C]].")
             .unwrap();
-        std::fs::File::create(&file_c).unwrap().write_all(b"# Note C\nTarget file.").unwrap();
+        std::fs::File::create(&file_c)
+            .unwrap()
+            .write_all(b"# Note C\nTarget file.")
+            .unwrap();
 
         let files = vec![file_a.clone(), file_b.clone(), file_c.clone()];
 

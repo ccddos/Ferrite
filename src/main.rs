@@ -55,8 +55,8 @@ mod workspaces;
 
 use app::FerriteApp;
 use clap::Parser;
-use config::{ load_config, LogLevel };
-use log::info;
+use config::{ load_config, LogLevel, WindowSize };
+use log::{info, warn};
 use rust_i18n::{ set_locale, t };
 use std::path::PathBuf;
 use ui::get_app_icon;
@@ -116,6 +116,125 @@ pub fn get_memory_usage_mb() -> (f64, f64) {
 pub fn get_memory_usage_mb() -> (f64, f64) {
     // On non-Windows, return 0 (could implement /proc/self/status parsing for Linux)
     (0.0, 0.0)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DisplayBounds {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+fn rects_intersect(a: DisplayBounds, b: DisplayBounds) -> bool {
+    a.x < b.x + b.width
+        && a.x + a.width > b.x
+        && a.y < b.y + b.height
+        && a.y + a.height > b.y
+}
+
+#[cfg(target_os = "macos")]
+fn active_display_bounds() -> Vec<DisplayBounds> {
+    type CGDirectDisplayID = u32;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CGRect {
+        origin: CGPoint,
+        size: CGSize,
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGGetActiveDisplayList(
+            max_displays: u32,
+            active_displays: *mut CGDirectDisplayID,
+            display_count: *mut u32,
+        ) -> i32;
+        fn CGDisplayBounds(display: CGDirectDisplayID) -> CGRect;
+    }
+
+    const MAX_DISPLAYS: usize = 16;
+
+    let mut displays = [0_u32; MAX_DISPLAYS];
+    let mut display_count = 0_u32;
+
+    let err = unsafe {
+        CGGetActiveDisplayList(
+            MAX_DISPLAYS as u32,
+            displays.as_mut_ptr(),
+            &mut display_count,
+        )
+    };
+
+    if err != 0 {
+        return Vec::new();
+    }
+
+    displays[..display_count as usize]
+        .iter()
+        .map(|display_id| unsafe { CGDisplayBounds(*display_id) })
+        .map(|bounds| DisplayBounds {
+            x: bounds.origin.x as f32,
+            y: bounds.origin.y as f32,
+            width: bounds.size.width as f32,
+            height: bounds.size.height as f32,
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn active_display_bounds() -> Vec<DisplayBounds> {
+    Vec::new()
+}
+
+fn sanitize_saved_window_position_for_current_displays(window_size: &mut WindowSize) {
+    let (Some(x), Some(y)) = (window_size.x, window_size.y) else {
+        return;
+    };
+
+    let displays = active_display_bounds();
+    if displays.is_empty() {
+        return;
+    }
+
+    let saved_rect = DisplayBounds {
+        x,
+        y,
+        width: window_size.width.max(1.0),
+        height: window_size.height.max(1.0),
+    };
+
+    let is_visible = displays
+        .iter()
+        .copied()
+        .any(|display| rects_intersect(saved_rect, display));
+
+    if !is_visible {
+        warn!(
+            "Saved window position ({}, {}) with size {}x{} is outside active displays; resetting position",
+            x,
+            y,
+            window_size.width,
+            window_size.height
+        );
+        window_size.x = None;
+        window_size.y = None;
+    }
 }
 
 /// Log current memory usage with a label.
@@ -196,7 +315,7 @@ fn main() -> eframe::Result<()> {
     });
 
     // Load settings to get configuration (including log level and language)
-    let settings = load_config();
+    let mut settings = load_config();
 
     // Apply saved language setting for i18n
     set_locale(settings.language.locale_code());
@@ -209,6 +328,7 @@ fn main() -> eframe::Result<()> {
 
     info!("Starting {}", APP_NAME);
     log_memory("After logging init");
+    sanitize_saved_window_position_for_current_displays(&mut settings.window_size);
     info!("Language: {} ({})", settings.language.native_name(), settings.language.locale_code());
     info!("i18n initialized: {}", t!("app.name"));
     info!("Log level: {} (source: {})", effective_log_level.display_name(), if
