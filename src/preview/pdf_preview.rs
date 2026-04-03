@@ -35,6 +35,12 @@ pub enum PdfMouseMode {
     Cursor,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfSidebarMode {
+    Thumbnails,
+    Outline,
+}
+
 /// Per-tab UI state for PDF preview.
 #[derive(Debug, Clone)]
 pub struct PdfPreviewState {
@@ -44,6 +50,7 @@ pub struct PdfPreviewState {
     pub spread_mode: PdfSpreadMode,
     pub scroll_layout: PdfScrollLayout,
     pub sidebar_visible: bool,
+    pub sidebar_mode: PdfSidebarMode,
     pub mouse_mode: PdfMouseMode,
 }
 
@@ -56,6 +63,7 @@ impl Default for PdfPreviewState {
             spread_mode: PdfSpreadMode::TwoPageOdd,
             scroll_layout: PdfScrollLayout::Vertical,
             sidebar_visible: true,
+            sidebar_mode: PdfSidebarMode::Thumbnails,
             mouse_mode: PdfMouseMode::Pan,
         }
     }
@@ -280,20 +288,6 @@ fn render_toolbar(ui: &mut Ui, state: &mut PdfPreviewState, total_pages: usize) 
 
                 ui.selectable_value(&mut state.mouse_mode, PdfMouseMode::Pan, "✋");
                 ui.selectable_value(&mut state.mouse_mode, PdfMouseMode::Cursor, "↖");
-
-                ui.separator();
-                ui.add_space(8.0);
-                ui.label(
-                    RichText::new("View")
-                        .strong()
-                        .color(Color32::from_rgb(88, 156, 255)),
-                );
-                ui.add_space(8.0);
-                ui.label(RichText::new("Annotate").color(Color32::WHITE));
-                ui.add_space(8.0);
-                ui.label(RichText::new("Shapes").color(Color32::WHITE));
-                ui.add_space(8.0);
-                ui.label(RichText::new("Form").color(Color32::WHITE));
             });
         });
 
@@ -461,78 +455,102 @@ fn render_sidebar(
         .inner_margin(egui::Margin::symmetric(12.0, 12.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut state.spread_mode, PdfSpreadMode::TwoPageOdd, "⧉");
+                ui.selectable_value(&mut state.sidebar_mode, PdfSidebarMode::Thumbnails, "⧉");
+                ui.selectable_value(&mut state.sidebar_mode, PdfSidebarMode::Outline, "☷");
             });
 
             ui.add_space(12.0);
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for page_index in 0..total_pages {
-                    match load_result_for_page(ui, path, page_index, 0.2, doc) {
-                        PdfLoadResult::Loaded(cached_tex) => {
-                            let selected = state.current_page == page_index;
-                            let frame_fill = if selected {
-                                Color32::from_rgb(88, 156, 255)
-                            } else {
-                                Color32::from_rgb(39, 48, 61)
-                            };
-                            let text_color = if selected {
-                                Color32::WHITE
-                            } else {
-                                Color32::from_rgb(210, 214, 220)
-                            };
+            match state.sidebar_mode {
+                PdfSidebarMode::Thumbnails => {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for page_index in 0..total_pages {
+                            match load_result_for_page(ui, path, page_index, 0.2, doc) {
+                                PdfLoadResult::Loaded(cached_tex) => {
+                                    let selected = state.current_page == page_index;
+                                    let frame_fill = if selected {
+                                        Color32::from_rgb(88, 156, 255)
+                                    } else {
+                                        Color32::from_rgb(39, 48, 61)
+                                    };
+                                    let text_color = if selected {
+                                        Color32::WHITE
+                                    } else {
+                                        Color32::from_rgb(210, 214, 220)
+                                    };
 
-                            let stroke = if selected {
-                                egui::Stroke::new(2.0, Color32::from_rgb(120, 180, 255))
-                            } else {
-                                egui::Stroke::new(1.0, Color32::from_rgb(58, 68, 84))
-                            };
+                                    let stroke = if selected {
+                                        egui::Stroke::new(2.0, Color32::from_rgb(120, 180, 255))
+                                    } else {
+                                        egui::Stroke::new(1.0, Color32::from_rgb(58, 68, 84))
+                                    };
 
-                            egui::Frame::none()
-                                .fill(frame_fill)
-                                .stroke(stroke)
-                                .rounding(10.0)
-                                .inner_margin(egui::Margin::same(10.0))
-                                .show(ui, |ui| {
-                                    ui.vertical_centered(|ui| {
-                                        let button = egui::Button::new("")
-                                            .fill(Color32::from_rgb(248, 249, 251))
-                                            .stroke(egui::Stroke::new(
-                                                1.0,
-                                                Color32::from_rgb(210, 214, 220),
-                                            ))
-                                            .min_size(egui::vec2(
-                                                PDF_THUMBNAIL_WIDTH,
-                                                PDF_THUMBNAIL_HEIGHT,
-                                            ));
+                                    egui::Frame::none()
+                                        .fill(frame_fill)
+                                        .stroke(stroke)
+                                        .rounding(10.0)
+                                        .inner_margin(egui::Margin::same(10.0))
+                                        .show(ui, |ui| {
+                                            ui.vertical_centered(|ui| {
+                                                let button = egui::Button::new("")
+                                                    .fill(Color32::from_rgb(248, 249, 251))
+                                                    .stroke(egui::Stroke::new(
+                                                        1.0,
+                                                        Color32::from_rgb(210, 214, 220),
+                                                    ))
+                                                    .min_size(egui::vec2(
+                                                        PDF_THUMBNAIL_WIDTH,
+                                                        PDF_THUMBNAIL_HEIGHT,
+                                                    ));
 
-                                        let response = ui.add(button);
-                                        let thumb_rect =
-                                            response.rect.shrink2(egui::vec2(8.0, 8.0));
-                                        ui.allocate_ui_at_rect(thumb_rect, |ui| {
-                                            ui.centered_and_justified(|ui| {
-                                                render_thumbnail_image(ui, &cached_tex);
+                                                let response = ui.add(button);
+                                                let thumb_rect =
+                                                    response.rect.shrink2(egui::vec2(8.0, 8.0));
+                                                ui.allocate_ui_at_rect(thumb_rect, |ui| {
+                                                    ui.centered_and_justified(|ui| {
+                                                        render_thumbnail_image(ui, &cached_tex);
+                                                    });
+                                                });
+
+                                                if response.clicked() {
+                                                    state.current_page = page_index;
+                                                }
+
+                                                ui.add_space(8.0);
+                                                ui.label(
+                                                    RichText::new((page_index + 1).to_string())
+                                                        .small()
+                                                        .color(text_color),
+                                                );
                                             });
                                         });
-
-                                        if response.clicked() {
-                                            state.current_page = page_index;
-                                        }
-
-                                        ui.add_space(8.0);
-                                        ui.label(
-                                            RichText::new((page_index + 1).to_string())
-                                                .small()
-                                                .color(text_color),
-                                        );
-                                    });
-                                });
-                            ui.add_space(12.0);
+                                    ui.add_space(12.0);
+                                }
+                                PdfLoadResult::Failed(_) => {}
+                            }
                         }
-                        PdfLoadResult::Failed(_) => {}
-                    }
+                    });
                 }
-            });
+                PdfSidebarMode::Outline => {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Outline")
+                                .strong()
+                                .color(Color32::from_rgb(210, 214, 220)),
+                        );
+                        ui.add_space(8.0);
+                        for page_index in 0..total_pages {
+                            let selected = state.current_page == page_index;
+                            if ui
+                                .selectable_label(selected, format!("Page {}", page_index + 1))
+                                .clicked()
+                            {
+                                state.current_page = page_index;
+                            }
+                        }
+                    });
+                }
+            }
         });
 }
 
