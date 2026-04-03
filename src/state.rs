@@ -62,6 +62,8 @@ pub enum FileType {
     Tsv,
     /// Image files rendered as read-only previews
     Image,
+    /// PDF files rendered as read-only previews
+    Pdf,
     /// Unknown or unsupported file type
     Unknown,
 }
@@ -85,6 +87,7 @@ impl FileType {
             "csv" => Self::Csv,
             "tsv" => Self::Tsv,
             "png" | "jpg" | "jpeg" | "gif" | "webp" => Self::Image,
+            "pdf" => Self::Pdf,
             _ => Self::Unknown,
         }
     }
@@ -109,6 +112,11 @@ impl FileType {
         matches!(self, Self::Image)
     }
 
+    /// Check if this is a PDF preview file type.
+    pub fn is_pdf(&self) -> bool {
+        matches!(self, Self::Pdf)
+    }
+
     /// Check if this file type supports split view (raw + rendered side-by-side).
     pub fn supports_split(&self) -> bool {
         self.is_markdown() || self.is_tabular()
@@ -124,6 +132,7 @@ impl FileType {
             Self::Csv => "CSV",
             Self::Tsv => "TSV",
             Self::Image => "Image",
+            Self::Pdf => "PDF",
             Self::Unknown => "Unknown",
         }
     }
@@ -1466,6 +1475,18 @@ impl Tab {
     pub fn with_image_file(id: usize, path: PathBuf, auto_save_default: bool) -> Self {
         let mut tab = Self::with_file(id, path, String::new());
         tab.file_type = FileType::Image;
+        tab.view_mode = ViewMode::Rendered;
+        tab.auto_save_enabled = auto_save_default;
+        tab.detected_encoding = None;
+        tab.current_encoding = "binary";
+        tab.original_bytes.clear();
+        tab
+    }
+
+    /// Create a read-only PDF preview tab from a file path.
+    pub fn with_pdf_file(id: usize, path: PathBuf, auto_save_default: bool) -> Self {
+        let mut tab = Self::with_file(id, path, String::new());
+        tab.file_type = FileType::Pdf;
         tab.view_mode = ViewMode::Rendered;
         tab.auto_save_enabled = auto_save_default;
         tab.detected_encoding = None;
@@ -3254,6 +3275,27 @@ impl AppState {
             return Ok(new_index);
         }
 
+        if file_type.is_pdf() {
+            let auto_save_default = self.settings.auto_save_enabled_default;
+            let tab = Tab::with_pdf_file(self.next_tab_id, path.clone(), auto_save_default);
+            self.next_tab_id += 1;
+            self.tabs.push(tab);
+            let new_index = self.tabs.len() - 1;
+
+            if focus {
+                self.active_tab_index = new_index;
+                info!("Opened PDF preview: {}", path.display());
+            } else {
+                info!("Opened PDF preview in background: {}", path.display());
+            }
+
+            self.settings.add_recent_file(path.clone());
+            self.settings_dirty = true;
+            self.save_settings_if_dirty();
+
+            return Ok(new_index);
+        }
+
         // Check for binary files - we can't edit binary data as text
         if is_binary_content(&bytes) {
             let reason = binary_detection_reason(&bytes);
@@ -4413,10 +4455,13 @@ mod tests {
         assert!(!FileType::Json.is_tabular());
         assert!(!FileType::Markdown.is_tabular());
         assert!(!FileType::Image.is_tabular());
+        assert!(!FileType::Pdf.is_tabular());
         assert!(!FileType::Unknown.is_tabular());
 
         assert!(FileType::Image.is_image());
         assert!(!FileType::Markdown.is_image());
+        assert!(FileType::Pdf.is_pdf());
+        assert!(!FileType::Markdown.is_pdf());
 
         assert_eq!(FileType::Markdown.display_name(), "Markdown");
         assert_eq!(FileType::Json.display_name(), "JSON");
@@ -4425,6 +4470,7 @@ mod tests {
         assert_eq!(FileType::Csv.display_name(), "CSV");
         assert_eq!(FileType::Tsv.display_name(), "TSV");
         assert_eq!(FileType::Image.display_name(), "Image");
+        assert_eq!(FileType::Pdf.display_name(), "PDF");
         assert_eq!(FileType::Unknown.display_name(), "Unknown");
     }
 
@@ -5481,6 +5527,30 @@ mod tests {
         assert!(result.is_ok());
         let tab = state.active_tab().unwrap();
         assert_eq!(tab.file_type(), FileType::Image);
+        assert_eq!(tab.view_mode, ViewMode::Rendered);
+        assert!(tab.content.is_empty());
+        assert_eq!(tab.current_encoding, "binary");
+    }
+
+    #[test]
+    fn test_open_pdf_file_as_preview() {
+        use std::io::Write;
+
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("ferrite_test_pdf_preview.pdf");
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF")
+            .unwrap();
+
+        let mut state = AppState::with_settings(Settings::default());
+        let result = state.open_file_with_focus(temp_file.clone(), true, None);
+
+        let _ = std::fs::remove_file(&temp_file);
+
+        assert!(result.is_ok());
+        let tab = state.active_tab().unwrap();
+        assert_eq!(tab.file_type(), FileType::Pdf);
         assert_eq!(tab.view_mode, ViewMode::Rendered);
         assert!(tab.content.is_empty());
         assert_eq!(tab.current_encoding, "binary");

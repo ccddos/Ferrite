@@ -73,7 +73,8 @@ impl ViewModeSegment {
         let rendered_available = file_type.is_markdown()
             || file_type.is_structured()
             || file_type.is_tabular()
-            || file_type.is_image();
+            || file_type.is_image()
+            || file_type.is_pdf();
 
         // Colors - refined for a polished pill appearance
         let bg_color = if is_dark {

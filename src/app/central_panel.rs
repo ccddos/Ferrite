@@ -18,7 +18,7 @@ use crate::markdown::{
     MarkdownFormatCommand, TreeViewer, TreeViewerState, WikilinkContext,
 };
 #[allow(unused_imports)]
-use crate::preview::{render_image_preview, SyncScrollState};
+use crate::preview::{render_image_preview, render_pdf_preview, SyncScrollState};
 use crate::state::{FileType, PendingAction, Selection, SpecialTabKind, TabKind};
 use crate::theme::ThemeColors;
 use crate::ui::{FileOperationResult, FormatToolbar, GoToLineResult, RibbonAction};
@@ -394,6 +394,13 @@ impl FerriteApp {
                         if let Some(tab) = self.state.active_tab() {
                             if let Some(path) = &tab.path {
                                 render_image_preview(ui, path);
+                            }
+                        }
+                    } else if active_file_type.is_pdf() {
+                        let pdf_state = self.pdf_viewer_states.entry(tab_id).or_default();
+                        if let Some(tab) = self.state.active_tab() {
+                            if let Some(path) = &tab.path {
+                                render_pdf_preview(ui, path, pdf_state);
                             }
                         }
                     } else {

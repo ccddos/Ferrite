@@ -89,6 +89,7 @@ ctrlc = "3.5.1"
 
 # HTTP client for update checking (lightweight, blocking)
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+hayro = { version = "0.5", default-features = false }
 
 # Async runtime for background workers (optional, feature-gated)
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "time"], optional = true }

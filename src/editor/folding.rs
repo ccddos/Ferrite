@@ -52,6 +52,9 @@ pub fn detect_fold_regions(
         FileType::Image => {
             // Image previews are non-text and don't support folding.
         }
+        FileType::Pdf => {
+            // PDF previews are non-text and don't support folding.
+        }
         FileType::Unknown => {
             // For unknown files, try indentation-based folding
             if fold_indentation {

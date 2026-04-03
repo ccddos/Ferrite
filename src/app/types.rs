@@ -91,6 +91,10 @@ pub(crate) enum KeyboardAction {
     ZoomOut,
     /// Reset zoom (Ctrl+0)
     ResetZoom,
+    /// Previous PDF page (Left Arrow)
+    PdfPrevPage,
+    /// Next PDF page (Right Arrow)
+    PdfNextPage,
 }
 
 /// Request to navigate to a heading in the document.
