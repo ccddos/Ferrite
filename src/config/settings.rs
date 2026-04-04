@@ -11,6 +11,8 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::preview::PdfViewStateSnapshot;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Keyboard Shortcut Configuration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1607,6 +1609,9 @@ pub struct TabInfo {
     /// Default is 0.5 (50/50 split). Only used when view_mode is Split.
     #[serde(default = "default_split_ratio")]
     pub split_ratio: f32,
+    /// Persisted PDF reader state for rendered PDF tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_view_state: Option<PdfViewStateSnapshot>,
 }
 
 /// Default split ratio for TabInfo (50/50 split)
@@ -1623,6 +1628,7 @@ impl Default for TabInfo {
             scroll_offset: 0.0,
             view_mode: ViewMode::Raw, // New documents default to raw mode
             split_ratio: 0.5,         // Default to 50/50 split
+            pdf_view_state: None,
         }
     }
 }
@@ -2904,6 +2910,7 @@ mod tests {
             scroll_offset: 100.0,
             view_mode: ViewMode::Rendered,
             split_ratio: 0.6,
+            pdf_view_state: None,
         };
 
         let json = serde_json::to_string(&tab).unwrap();
@@ -2937,6 +2944,49 @@ mod tests {
         let json = r#"{"path": "/test.md", "modified": false, "cursor_position": [0, 0], "scroll_offset": 0.0}"#;
         let tab: TabInfo = serde_json::from_str(json).unwrap();
         assert_eq!(tab.view_mode, ViewMode::Raw);
+    }
+
+    #[test]
+    fn test_tab_info_pdf_view_state_roundtrip() {
+        use crate::preview::{
+            PdfScrollLayout, PdfSidebarMode, PdfSpreadMode, PdfViewStateSnapshot,
+        };
+
+        let tab = TabInfo {
+            path: Some(PathBuf::from("/tmp/sample.pdf")),
+            modified: false,
+            cursor_position: (0, 0),
+            scroll_offset: 0.0,
+            view_mode: ViewMode::Rendered,
+            split_ratio: 0.5,
+            pdf_view_state: Some(PdfViewStateSnapshot {
+                current_page: 7,
+                zoom_percent: 150,
+                spread_mode: PdfSpreadMode::TwoPageOdd,
+                scroll_layout: PdfScrollLayout::Vertical,
+                sidebar_visible: true,
+                sidebar_mode: PdfSidebarMode::Outline,
+            }),
+        };
+
+        let json = serde_json::to_string(&tab).unwrap();
+        let restored: TabInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.pdf_view_state, tab.pdf_view_state);
+    }
+
+    #[test]
+    fn test_tab_info_pdf_view_state_backward_compatibility() {
+        let json = r#"{
+            "path": "/tmp/sample.pdf",
+            "modified": false,
+            "cursor_position": [0, 0],
+            "scroll_offset": 0.0,
+            "view_mode": "rendered",
+            "split_ratio": 0.5
+        }"#;
+
+        let restored: TabInfo = serde_json::from_str(json).unwrap();
+        assert!(restored.pdf_view_state.is_none());
     }
 
     // ─────────────────────────────────────────────────────────────────────────

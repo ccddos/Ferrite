@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 use crate::config::{persistence::get_config_dir, ViewMode};
+use crate::preview::PdfViewStateSnapshot;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -210,6 +211,10 @@ pub struct SessionTabState {
     /// Stored as single byte: ',' = 44, '\t' = 9, ';' = 59, '|' = 124
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub csv_delimiter: Option<u8>,
+
+    /// Persisted PDF reader state for rendered PDF tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_view_state: Option<PdfViewStateSnapshot>,
 }
 
 impl Default for SessionTabState {
@@ -228,6 +233,7 @@ impl Default for SessionTabState {
             file_mtime: None,
             original_content_hash: None,
             csv_delimiter: None,
+            pdf_view_state: None,
         }
     }
 }
@@ -1291,6 +1297,7 @@ mod tests {
             file_mtime: Some(1234567890),
             original_content_hash: Some(12345),
             csv_delimiter: None,
+            pdf_view_state: None,
         });
         state.active_tab_index = 0;
 
@@ -1303,6 +1310,41 @@ mod tests {
         assert_eq!(loaded.tabs[0].path, Some(PathBuf::from("/test/file.md")));
         assert_eq!(loaded.tabs[0].view_mode, ViewMode::Rendered);
         assert_eq!(loaded.tabs[0].has_unsaved_content, true);
+    }
+
+    #[test]
+    fn test_session_tab_state_pdf_view_state_roundtrip() {
+        use crate::preview::{
+            PdfScrollLayout, PdfSidebarMode, PdfSpreadMode, PdfViewStateSnapshot,
+        };
+
+        let session_tab = SessionTabState {
+            tab_id: 9,
+            path: Some(PathBuf::from("/tmp/sample.pdf")),
+            display_title: "sample.pdf".to_string(),
+            view_mode: ViewMode::Rendered,
+            cursor_char_index: 0,
+            cursor_position: (0, 0),
+            selection: None,
+            scroll_offset: 0.0,
+            rendered_scroll_offset: 0.0,
+            has_unsaved_content: false,
+            file_mtime: None,
+            original_content_hash: None,
+            csv_delimiter: None,
+            pdf_view_state: Some(PdfViewStateSnapshot {
+                current_page: 42,
+                zoom_percent: 125,
+                spread_mode: PdfSpreadMode::TwoPageOdd,
+                scroll_layout: PdfScrollLayout::Horizontal,
+                sidebar_visible: false,
+                sidebar_mode: PdfSidebarMode::Thumbnails,
+            }),
+        };
+
+        let json = serde_json::to_string(&session_tab).unwrap();
+        let restored: SessionTabState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.pdf_view_state, session_tab.pdf_view_state);
     }
 
     #[test]
