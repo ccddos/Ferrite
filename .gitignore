@@ -93,6 +93,7 @@ temp/
 
 # Local workspace state (should not be committed)
 **/.ferrite/
+.worktrees/
 
 # Build script artifacts
 *.d
