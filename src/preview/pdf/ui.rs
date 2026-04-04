@@ -93,9 +93,7 @@ fn load_result_for_page(
 ) -> PdfLoadResult {
     let key = PageRenderKey::new(path, page_index, zoom_bucket);
 
-    if let Some(texture) =
-        with_pdf_texture_cache(ui, |cache| cache.textures.get(&key).cloned())
-    {
+    if let Some(texture) = with_pdf_texture_cache(ui, |cache| cache.textures.get(&key).cloned()) {
         return PdfLoadResult::Loaded(texture);
     }
 
@@ -316,12 +314,8 @@ fn render_continuous_vertical(
 
             for page_index in first_visible..last_visible {
                 let (page_w, page_h) = estimated_page_size(ui, path, page_index, zoom);
-                match load_result_for_page(
-                    ui,
-                    path,
-                    page_index,
-                    super::runtime::zoom_bucket(zoom),
-                ) {
+                match load_result_for_page(ui, path, page_index, super::runtime::zoom_bucket(zoom))
+                {
                     PdfLoadResult::Loading => {
                         ui.vertical_centered(|ui| {
                             render_page_placeholder(ui, page_w, page_h, "Rendering page...");
@@ -404,11 +398,7 @@ fn render_continuous_two_column(
                                     render_page_image(ui, &cached_tex);
                                 }),
                                 PdfLoadResult::Failed(msg) => ui.vertical(|ui| {
-                                    ui.label(format!(
-                                        "Page {} failed: {}",
-                                        current_index + 1,
-                                        msg
-                                    ));
+                                    ui.label(format!("Page {} failed: {}", current_index + 1, msg));
                                 }),
                             };
                         } else {
@@ -581,9 +571,7 @@ fn render_sidebar(
                                                     }
                                                     PdfLoadResult::Failed(_) => {
                                                         ui.label(
-                                                            RichText::new("Failed")
-                                                                .small()
-                                                                .weak(),
+                                                            RichText::new("Failed").small().weak(),
                                                         );
                                                     }
                                                 }
