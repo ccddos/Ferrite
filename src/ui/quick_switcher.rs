@@ -15,6 +15,8 @@ use fuzzy_matcher::FuzzyMatcher;
 use rust_i18n::t;
 use std::path::PathBuf;
 
+use crate::{config::CjkFontPreference, fonts::ComplexScriptFontPreferences};
+
 /// Maximum number of results to show in the quick switcher.
 const MAX_RESULTS: usize = 15;
 
@@ -92,6 +94,9 @@ impl QuickSwitcher {
         recent_files: &[PathBuf],
         workspace_root: &PathBuf,
         is_dark: bool,
+        custom_font: Option<&str>,
+        cjk_preference: CjkFontPreference,
+        complex_script_preferences: Option<&ComplexScriptFontPreferences>,
     ) -> QuickSwitcherOutput {
         let mut output = QuickSwitcherOutput::default();
 
@@ -225,6 +230,20 @@ impl QuickSwitcher {
                         } else {
                             for (idx, result) in results.iter().enumerate() {
                                 let is_selected = idx == self.selected_index;
+                                crate::fonts::check_and_load_cjk_if_needed(
+                                    &result.display_name,
+                                    ctx,
+                                    custom_font,
+                                    cjk_preference,
+                                    complex_script_preferences,
+                                );
+                                crate::fonts::check_and_load_cjk_if_needed(
+                                    &result.relative_path,
+                                    ctx,
+                                    custom_font,
+                                    cjk_preference,
+                                    complex_script_preferences,
+                                );
 
                                 // Draw content first with horizontal layout
                                 let row_response = ui

@@ -37,6 +37,7 @@ impl FerriteApp {
                 } else {
                     t!("status.no_file").to_string()
                 };
+                self.ensure_cjk_fonts_for_ui_text(ctx, &path_display);
 
                 // Make the file path a clickable button that opens the recent items popup
                 let has_recent_files = !self.state.settings.recent_files.is_empty();
@@ -131,6 +132,8 @@ impl FerriteApp {
                                         let parent_dir = path.parent()
                                             .and_then(|p| p.to_str())
                                             .unwrap_or("");
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), file_name);
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), parent_dir);
 
                                         let item_response = ui.add(
                                             egui::Button::new(
@@ -166,6 +169,8 @@ impl FerriteApp {
                                         let parent_dir = path.parent()
                                             .and_then(|p| p.to_str())
                                             .unwrap_or("");
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), folder_name);
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), parent_dir);
 
                                         let item_response = ui.add(
                                             egui::Button::new(
@@ -200,6 +205,8 @@ impl FerriteApp {
                                         let parent_dir = path.parent()
                                             .and_then(|p| p.to_str())
                                             .unwrap_or("");
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), file_name);
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), parent_dir);
 
                                         let item_response = ui.add(
                                             egui::Button::new(
@@ -233,6 +240,8 @@ impl FerriteApp {
                                         let parent_dir = path.parent()
                                             .and_then(|p| p.to_str())
                                             .unwrap_or("");
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), folder_name);
+                                        self.ensure_cjk_fonts_for_ui_text(ui.ctx(), parent_dir);
 
                                         let item_response = ui.add(
                                             egui::Button::new(

@@ -60,6 +60,10 @@ impl FerriteApp {
                     })
                     .collect();
 
+                for (_, title, _) in &tab_titles {
+                    self.ensure_cjk_fonts_for_ui_text(ctx, title);
+                }
+
                 // Custom wrapping tab bar
                 let available_width = ui.available_width();
                 let tab_height = 24.0;
@@ -1939,6 +1943,9 @@ impl FerriteApp {
                     recent_files,
                     &workspace.root_path,
                     is_dark,
+                    self.state.settings.font_family.custom_name(),
+                    self.state.settings.cjk_font_preference,
+                    Some(&self.state.settings.complex_script_font_preferences),
                 );
 
                 // Handle file selection

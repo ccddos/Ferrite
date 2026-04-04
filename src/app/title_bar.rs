@@ -82,6 +82,7 @@ impl FerriteApp {
                     // Window title (dynamically generated) - use consistent sizing
                     // Offset text slightly upward to better align with icon center
                     let title = self.window_title();
+                    self.ensure_cjk_fonts_for_ui_text(ctx, &title);
                     ui.add(egui::Label::new(egui::RichText::new(title).size(12.0).color(text_color)).selectable(false));
 
                     // Auto-save indicator (after filename) - only show for document tabs

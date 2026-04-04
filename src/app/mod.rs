@@ -201,6 +201,23 @@ pub struct FerriteApp {
 }
 
 impl FerriteApp {
+    pub(crate) fn ensure_cjk_fonts_for_ui_text(&self, ctx: &egui::Context, text: &str) -> bool {
+        let custom_font = self
+            .state
+            .settings
+            .font_family
+            .custom_name()
+            .map(|s| s.to_string());
+
+        crate::fonts::check_and_load_cjk_if_needed(
+            text,
+            ctx,
+            custom_font.as_deref(),
+            self.state.settings.cjk_font_preference,
+            Some(&self.state.settings.complex_script_font_preferences),
+        )
+    }
+
     /// Create a new FerriteApp instance.
     ///
     /// This initializes the application state from the config file and applies
@@ -1784,6 +1801,9 @@ impl FerriteApp {
                     workspace_name,
                     is_dark,
                     git_statuses.as_ref(),
+                    self.state.settings.font_family.custom_name(),
+                    self.state.settings.cjk_font_preference,
+                    Some(&self.state.settings.complex_script_font_preferences),
                 );
 
                 file_tree_file_clicked = output.file_clicked;

@@ -10,6 +10,7 @@
 
 use crate::vcs::GitFileStatus;
 use crate::workspaces::{FileTreeNode, FileTreeNodeKind};
+use crate::{config::CjkFontPreference, fonts::ComplexScriptFontPreferences};
 use eframe::egui::{self, Color32, RichText, Sense, Ui, Vec2};
 use rust_i18n::t;
 use std::collections::HashMap;
@@ -123,8 +124,18 @@ impl FileTreePanel {
         workspace_name: &str,
         is_dark: bool,
         git_statuses: Option<&HashMap<PathBuf, GitFileStatus>>,
+        custom_font: Option<&str>,
+        cjk_preference: CjkFontPreference,
+        complex_script_preferences: Option<&ComplexScriptFontPreferences>,
     ) -> FileTreeOutput {
         let mut output = FileTreeOutput::default();
+        self.ensure_tree_text_fonts_loaded(
+            ctx,
+            workspace_name,
+            custom_font,
+            cjk_preference,
+            complex_script_preferences,
+        );
 
         // Panel colors
         let panel_bg = if is_dark {
@@ -198,7 +209,17 @@ impl FileTreePanel {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         ui.add_space(4.0);
-                        self.render_tree_node(ui, file_tree, 0, is_dark, &mut output, git_statuses);
+                        self.render_tree_node(
+                            ui,
+                            file_tree,
+                            0,
+                            is_dark,
+                            &mut output,
+                            git_statuses,
+                            custom_font,
+                            cjk_preference,
+                            complex_script_preferences,
+                        );
                         ui.add_space(4.0);
                     });
             });
@@ -215,7 +236,17 @@ impl FileTreePanel {
         is_dark: bool,
         output: &mut FileTreeOutput,
         git_statuses: Option<&HashMap<PathBuf, GitFileStatus>>,
+        custom_font: Option<&str>,
+        cjk_preference: CjkFontPreference,
+        complex_script_preferences: Option<&ComplexScriptFontPreferences>,
     ) {
+        self.ensure_tree_text_fonts_loaded(
+            ui.ctx(),
+            &node.name,
+            custom_font,
+            cjk_preference,
+            complex_script_preferences,
+        );
         let indent = depth as f32 * INDENT_PER_LEVEL;
 
         // Colors
@@ -363,11 +394,38 @@ impl FileTreePanel {
         if let FileTreeNodeKind::Directory { children } = &node.kind {
             if node.is_expanded {
                 for child in children {
-                    self.render_tree_node(ui, child, depth + 1, is_dark, output, git_statuses);
+                    self.render_tree_node(
+                        ui,
+                        child,
+                        depth + 1,
+                        is_dark,
+                        output,
+                        git_statuses,
+                        custom_font,
+                        cjk_preference,
+                        complex_script_preferences,
+                    );
                 }
             }
         }
         // Note: DirectoryNotLoaded nodes won't render children until loaded
+    }
+
+    fn ensure_tree_text_fonts_loaded(
+        &self,
+        ctx: &egui::Context,
+        text: &str,
+        custom_font: Option<&str>,
+        cjk_preference: CjkFontPreference,
+        complex_script_preferences: Option<&ComplexScriptFontPreferences>,
+    ) {
+        crate::fonts::check_and_load_cjk_if_needed(
+            text,
+            ctx,
+            custom_font,
+            cjk_preference,
+            complex_script_preferences,
+        );
     }
 
     /// Get the Git status color for file/folder names.
