@@ -2,7 +2,10 @@ use eframe::egui::{self, Color32, ColorImage, RichText, TextureHandle, TextureOp
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::model::{PdfMouseMode, PdfPreviewState, PdfScrollLayout, PdfSidebarMode, PdfSpreadMode};
+use super::model::{
+    outline_or_page_list, parse_page_jump_input, PdfMouseMode, PdfPreviewState, PdfScrollLayout,
+    PdfSidebarMode, PdfSpreadMode,
+};
 use super::runtime::{
     thumbnail_zoom_bucket, with_pdf_runtime, PageRenderKey, PdfDocumentLoadState,
     PdfDocumentMetadata, RenderedPdfBitmap,
@@ -245,6 +248,25 @@ fn render_toolbar(ui: &mut Ui, state: &mut PdfPreviewState, total_pages: usize) 
                 ui.separator();
                 ui.selectable_value(&mut state.mouse_mode, PdfMouseMode::Pan, "✋");
                 ui.selectable_value(&mut state.mouse_mode, PdfMouseMode::Cursor, "↖");
+
+                ui.separator();
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut state.page_jump_input)
+                        .desired_width(56.0)
+                        .hint_text("Page"),
+                );
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Some(target) = parse_page_jump_input(&state.page_jump_input, total_pages)
+                    {
+                        state.current_page = target;
+                    }
+                }
+                if ui.button("Go").clicked() {
+                    if let Some(target) = parse_page_jump_input(&state.page_jump_input, total_pages)
+                    {
+                        state.current_page = target;
+                    }
+                }
             });
         });
 }
@@ -597,43 +619,34 @@ fn render_sidebar(
                                 .color(Color32::from_rgb(210, 214, 220)),
                         );
                         ui.add_space(8.0);
-                        if doc.outline.is_empty() {
-                            ui.label(
-                                RichText::new("No outline")
-                                    .small()
-                                    .color(Color32::from_rgb(160, 168, 180)),
-                            );
-                        } else {
-                            for item in &doc.outline {
-                                let selected = state.current_page == item.page_index;
-                                let fill = if selected {
-                                    Color32::from_rgb(88, 156, 255)
-                                } else {
-                                    Color32::TRANSPARENT
-                                };
-                                let text_color = if selected {
-                                    Color32::WHITE
-                                } else {
-                                    Color32::from_rgb(210, 214, 220)
-                                };
-                                ui.horizontal(|ui| {
-                                    ui.add_space((item.depth as f32) * 18.0);
-                                    let button = egui::Button::new(
-                                        RichText::new(&item.title).color(text_color),
-                                    )
-                                    .fill(fill)
-                                    .stroke(egui::Stroke::NONE)
-                                    .min_size(egui::vec2(
-                                        (ui.available_width() - (item.depth as f32) * 18.0)
-                                            .max(0.0),
-                                        34.0,
-                                    ));
-                                    if ui.add(button).clicked() {
-                                        state.current_page = item.page_index;
-                                    }
-                                });
-                                ui.add_space(6.0);
-                            }
+                        for item in outline_or_page_list(&doc.outline, doc.total_pages) {
+                            let selected = state.current_page == item.page_index;
+                            let fill = if selected {
+                                Color32::from_rgb(88, 156, 255)
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            let text_color = if selected {
+                                Color32::WHITE
+                            } else {
+                                Color32::from_rgb(210, 214, 220)
+                            };
+                            ui.horizontal(|ui| {
+                                ui.add_space((item.depth as f32) * 18.0);
+                                let button =
+                                    egui::Button::new(RichText::new(&item.label).color(text_color))
+                                        .fill(fill)
+                                        .stroke(egui::Stroke::NONE)
+                                        .min_size(egui::vec2(
+                                            (ui.available_width() - (item.depth as f32) * 18.0)
+                                                .max(0.0),
+                                            34.0,
+                                        ));
+                                if ui.add(button).clicked() {
+                                    state.current_page = item.page_index;
+                                }
+                            });
+                            ui.add_space(6.0);
                         }
                     });
                 }

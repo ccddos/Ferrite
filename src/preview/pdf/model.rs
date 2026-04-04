@@ -54,6 +54,13 @@ pub(crate) struct PdfOutlineItem {
     pub depth: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfNavItem {
+    pub label: String,
+    pub page_index: usize,
+    pub depth: usize,
+}
+
 /// Per-tab UI state for PDF preview.
 #[derive(Debug, Clone)]
 pub struct PdfPreviewState {
@@ -65,6 +72,7 @@ pub struct PdfPreviewState {
     pub sidebar_visible: bool,
     pub sidebar_mode: PdfSidebarMode,
     pub mouse_mode: PdfMouseMode,
+    pub page_jump_input: String,
 }
 
 impl Default for PdfPreviewState {
@@ -78,6 +86,7 @@ impl Default for PdfPreviewState {
             sidebar_visible: true,
             sidebar_mode: PdfSidebarMode::Thumbnails,
             mouse_mode: PdfMouseMode::Pan,
+            page_jump_input: String::new(),
         }
     }
 }
@@ -104,6 +113,61 @@ impl PdfPreviewState {
             sidebar_visible: snapshot.sidebar_visible,
             sidebar_mode: snapshot.sidebar_mode,
             mouse_mode: PdfMouseMode::Pan,
+            page_jump_input: String::new(),
         }
+    }
+}
+
+pub fn parse_page_jump_input(input: &str, total_pages: usize) -> Option<usize> {
+    let page = input.trim().parse::<usize>().ok()?;
+    if page == 0 || page > total_pages {
+        return None;
+    }
+    Some(page - 1)
+}
+
+pub fn outline_or_page_list(outline: &[PdfOutlineItem], total_pages: usize) -> Vec<PdfNavItem> {
+    if outline.is_empty() {
+        return (0..total_pages)
+            .map(|page_index| PdfNavItem {
+                label: format!("Page {}", page_index + 1),
+                page_index,
+                depth: 0,
+            })
+            .collect();
+    }
+
+    outline
+        .iter()
+        .map(|item| PdfNavItem {
+            label: item.title.clone(),
+            page_index: item.page_index,
+            depth: item.depth,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_page_jump_input_accepts_one_based_page_numbers() {
+        assert_eq!(parse_page_jump_input("12", 200), Some(11));
+    }
+
+    #[test]
+    fn test_parse_page_jump_input_rejects_out_of_range_page_numbers() {
+        assert_eq!(parse_page_jump_input("0", 200), None);
+        assert_eq!(parse_page_jump_input("201", 200), None);
+        assert_eq!(parse_page_jump_input("abc", 200), None);
+    }
+
+    #[test]
+    fn test_outline_or_page_list_returns_page_list_when_outline_is_empty() {
+        let items = outline_or_page_list(&[], 3);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].label, "Page 1");
+        assert_eq!(items[2].page_index, 2);
     }
 }
