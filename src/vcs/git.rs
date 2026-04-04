@@ -328,18 +328,67 @@ impl GitService {
         let Some(repo_root) = &self.repo_root else {
             return GitFileStatus::Clean;
         };
+        let Some(repo) = &self.repo else {
+            return GitFileStatus::Clean;
+        };
 
         // Convert absolute path to relative path within the repo
         let relative_path = match path.strip_prefix(repo_root) {
             Ok(rel) => rel.to_path_buf(),
-            Err(_) => return GitFileStatus::Clean, // Path outside repo
+            Err(_) => {
+                let canonical_path = path.canonicalize().ok();
+                let canonical_root = repo_root.canonicalize().ok();
+                match (canonical_path, canonical_root) {
+                    (Some(canonical_path), Some(canonical_root)) => {
+                        match canonical_path.strip_prefix(&canonical_root) {
+                            Ok(rel) => rel.to_path_buf(),
+                            Err(_) => return GitFileStatus::Clean,
+                        }
+                    }
+                    _ => return GitFileStatus::Clean,
+                }
+            }
         };
 
         // Look up in cache
-        self.file_statuses
-            .get(&relative_path)
-            .copied()
-            .unwrap_or(GitFileStatus::Clean)
+        if let Some(status) = self.file_statuses.get(&relative_path).copied() {
+            return status;
+        }
+
+        let fallback = match repo.status_file(&relative_path) {
+            Ok(status) => {
+                let mapped = GitFileStatus::from_git2_status(status);
+                if mapped.is_visible() {
+                    return mapped;
+                }
+                GitFileStatus::Clean
+            }
+            Err(e) if e.code() == ErrorCode::NotFound => GitFileStatus::Clean,
+            Err(e) => {
+                warn!(
+                    "Error getting Git status for {}: {}",
+                    relative_path.display(),
+                    e
+                );
+                GitFileStatus::Clean
+            }
+        };
+
+        if fallback == GitFileStatus::Clean && path.exists() {
+            if let Ok(ignored) = repo.status_should_ignore(&relative_path) {
+                if ignored {
+                    return GitFileStatus::Ignored;
+                }
+            }
+
+            if let Ok(index) = repo.index() {
+                if index.get_path(&relative_path, 0).is_none() {
+                    return GitFileStatus::Untracked;
+                }
+            }
+        }
+
+        fallback
     }
 
     /// Get all file statuses as a HashMap with absolute paths.
