@@ -5,15 +5,15 @@
 
 mod image_preview;
 pub mod pdf;
-mod pdf_preview;
 mod sync_scroll;
 
 // Note: ScrollOrigin is available for future split-view bidirectional sync scrolling
 #[allow(unused_imports)]
 pub use image_preview::render_image_preview;
 #[allow(unused_imports)]
-pub use pdf::{PdfScrollLayout, PdfSidebarMode, PdfSpreadMode, PdfViewStateSnapshot};
-#[allow(unused_imports)]
-pub use pdf_preview::{render_pdf_preview, PdfPreviewState};
+pub use pdf::{
+    render_pdf_preview, PdfMouseMode, PdfPreviewState, PdfScrollLayout, PdfSidebarMode,
+    PdfSpreadMode, PdfViewStateSnapshot,
+};
 #[allow(unused_imports)]
 pub use sync_scroll::{ScrollOrigin, SyncScrollState};
