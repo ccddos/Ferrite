@@ -5673,6 +5673,23 @@ mod tests {
     }
 
     #[test]
+    fn test_pdf_tab_roundtrip_via_tab_info_preserves_page_zoom_and_sidebar() {
+        let mut tab = Tab::with_pdf_file(1, PathBuf::from("/tmp/spec.pdf"), false);
+        let pdf = tab.pdf_view_state.as_mut().unwrap();
+        pdf.current_page = 15;
+        pdf.zoom = 1.25;
+        pdf.sidebar_visible = false;
+
+        let info = tab.to_tab_info();
+        let restored = Tab::from_tab_info(2, &info, String::new());
+        let restored_pdf = restored.pdf_view_state.as_ref().unwrap();
+
+        assert_eq!(restored_pdf.current_page, 15);
+        assert_eq!(restored_pdf.zoom, 1.25);
+        assert!(!restored_pdf.sidebar_visible);
+    }
+
+    #[test]
     fn test_open_file_already_open_with_focus() {
         use std::io::Write;
 
