@@ -397,10 +397,11 @@ impl FerriteApp {
                             }
                         }
                     } else if active_file_type.is_pdf() {
-                        let pdf_state = self.pdf_viewer_states.entry(tab_id).or_default();
-                        if let Some(tab) = self.state.active_tab() {
-                            if let Some(path) = &tab.path {
-                                render_pdf_preview(ui, path, pdf_state);
+                        if let Some(tab) = self.state.active_tab_mut() {
+                            if let (Some(path), Some(pdf_state)) =
+                                (tab.path.clone(), tab.pdf_view_state.as_mut())
+                            {
+                                render_pdf_preview(ui, &path, pdf_state);
                             }
                         }
                     } else {

@@ -115,8 +115,6 @@ pub struct FerriteApp {
     /// Sync scroll states per tab (keyed by tab ID)
     /// Used for bidirectional scroll synchronization in split view
     sync_scroll_states: HashMap<usize, SyncScrollState>,
-    /// PDF preview states per tab (keyed by tab ID)
-    pdf_viewer_states: HashMap<usize, crate::preview::PdfPreviewState>,
     /// Track if we should exit (after confirmation)
     should_exit: bool,
     /// Last known window size (for detecting changes)
@@ -398,7 +396,6 @@ impl FerriteApp {
             tree_viewer_states: HashMap::new(),
             csv_viewer_states: HashMap::new(),
             sync_scroll_states: HashMap::new(),
-            pdf_viewer_states: HashMap::new(),
             should_exit: false,
             last_window_size: None,
             last_window_pos: None,
@@ -822,7 +819,6 @@ impl FerriteApp {
         self.tree_viewer_states.remove(&tab_id);
         self.csv_viewer_states.remove(&tab_id);
         self.sync_scroll_states.remove(&tab_id);
-        self.pdf_viewer_states.remove(&tab_id);
 
         // Send didClose and update doc count if this tab had an active LSP session
         if let Some((norm_path, server_key)) = self.lsp_tab_server.remove(&tab_id) {

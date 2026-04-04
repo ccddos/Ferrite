@@ -50,8 +50,10 @@ impl FerriteApp {
             if let Some(action) = pdf_nav {
                 match action {
                     KeyboardAction::PdfPrevPage => {
-                        if let Some(tab) = self.state.active_tab() {
-                            let pdf_state = self.pdf_viewer_states.entry(tab.id).or_default();
+                        if let Some(tab) = self.state.active_tab_mut() {
+                            let Some(pdf_state) = tab.pdf_view_state.as_mut() else {
+                                return;
+                            };
                             if pdf_state.current_page > 0 {
                                 pdf_state.current_page -= 1;
                             }
@@ -59,8 +61,10 @@ impl FerriteApp {
                         return;
                     }
                     KeyboardAction::PdfNextPage => {
-                        if let Some(tab) = self.state.active_tab() {
-                            let pdf_state = self.pdf_viewer_states.entry(tab.id).or_default();
+                        if let Some(tab) = self.state.active_tab_mut() {
+                            let Some(pdf_state) = tab.pdf_view_state.as_mut() else {
+                                return;
+                            };
                             let can_advance = pdf_state
                                 .total_pages
                                 .map(|total| pdf_state.current_page + 1 < total)

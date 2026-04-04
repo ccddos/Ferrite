@@ -12,6 +12,7 @@
 use crate::config::{load_config, save_config_silent, Settings, TabInfo, ViewMode};
 use crate::editor::{compute_edit_ops, EditHistory};
 use crate::lsp::{DiagnosticMap, LspManager};
+use crate::preview::PdfPreviewState;
 use crate::ui::TabPipelineState;
 use crate::vcs::GitService;
 use crate::workspaces::{filter_events, AppMode, Workspace, WorkspaceEvent, WorkspaceWatcher};
@@ -1177,6 +1178,8 @@ pub struct Tab {
     /// Split view ratio (0.0 to 1.0, proportion of width for left pane)
     /// Default is 0.5 (50/50 split). Only used when view_mode is Split.
     pub split_ratio: f32,
+    /// Reader state for read-only PDF preview tabs.
+    pub pdf_view_state: Option<PdfPreviewState>,
     /// Live Pipeline state for this tab (JSON/YAML command piping)
     pub pipeline_state: TabPipelineState,
     /// Detected encoding when the file was opened (e.g., "UTF-8", "WINDOWS-1252")
@@ -1244,6 +1247,7 @@ impl Tab {
             last_auto_save_content_hash: None,
             fold_state: FoldState::new(),
             split_ratio: 0.5, // Default to 50/50 split
+            pdf_view_state: None,
             pipeline_state: TabPipelineState::default(),
             detected_encoding: None, // New documents have no detected encoding
             original_bytes: Vec::new(), // No original bytes for new docs
@@ -1328,6 +1332,7 @@ impl Tab {
             last_auto_save_content_hash: None,
             fold_state: FoldState::new(),
             split_ratio: 0.5,
+            pdf_view_state: None,
             pipeline_state: TabPipelineState::default(),
             detected_encoding: Some("utf-8"),
             original_bytes: Vec::new(),
@@ -1420,6 +1425,7 @@ impl Tab {
             last_auto_save_content_hash: None,
             fold_state: FoldState::new(),
             split_ratio: 0.5,
+            pdf_view_state: None,
             pipeline_state: TabPipelineState::default(),
             detected_encoding: Some(actual_encoding),
             original_bytes,
@@ -1480,6 +1486,7 @@ impl Tab {
         tab.detected_encoding = None;
         tab.current_encoding = "binary";
         tab.original_bytes.clear();
+        tab.pdf_view_state = None;
         tab
     }
 
@@ -1492,6 +1499,7 @@ impl Tab {
         tab.detected_encoding = None;
         tab.current_encoding = "binary";
         tab.original_bytes.clear();
+        tab.pdf_view_state = Some(PdfPreviewState::default());
         tab
     }
 
@@ -1523,7 +1531,7 @@ impl Tab {
             EditHistory::new()
         };
 
-        Self {
+        let mut tab = Self {
             id,
             kind: TabKind::Document,
             path: info.path.clone(),
@@ -1555,13 +1563,25 @@ impl Tab {
             last_auto_save_content_hash: None,
             fold_state: FoldState::new(),
             split_ratio: info.split_ratio,
+            pdf_view_state: None,
             pipeline_state: TabPipelineState::default(),
             detected_encoding: Some("utf-8"),
             original_bytes: Vec::new(),
             current_encoding: "utf-8",
             had_bom: false,
             pending_undo_snapshot: None,
+        };
+
+        if tab.file_type() == FileType::Pdf {
+            tab.pdf_view_state = Some(
+                info.pdf_view_state
+                    .clone()
+                    .map(PdfPreviewState::from_snapshot)
+                    .unwrap_or_default(),
+            );
         }
+
+        tab
     }
 
     /// Create a tab from session info with settings-based auto-save.
@@ -1639,7 +1659,7 @@ impl Tab {
             EditHistory::new()
         };
 
-        Self {
+        let mut tab = Self {
             id,
             kind: TabKind::Document,
             path: info.path.clone(),
@@ -1671,13 +1691,25 @@ impl Tab {
             last_auto_save_content_hash: None,
             fold_state: FoldState::new(),
             split_ratio: info.split_ratio,
+            pdf_view_state: None,
             pipeline_state: TabPipelineState::default(),
             detected_encoding: Some(actual_encoding),
             original_bytes,
             current_encoding: actual_encoding,
             had_bom,
             pending_undo_snapshot: None,
+        };
+
+        if tab.file_type() == FileType::Pdf {
+            tab.pdf_view_state = Some(
+                info.pdf_view_state
+                    .clone()
+                    .map(PdfPreviewState::from_snapshot)
+                    .unwrap_or_default(),
+            );
         }
+
+        tab
     }
 
     /// Check if the tab has unsaved changes.
@@ -2114,6 +2146,7 @@ impl Tab {
             scroll_offset: self.scroll_offset,
             view_mode: self.view_mode,
             split_ratio: self.split_ratio,
+            pdf_view_state: self.pdf_view_state.as_ref().map(PdfPreviewState::to_snapshot),
         }
     }
 
@@ -3781,6 +3814,7 @@ impl AppState {
                     file_mtime,
                     original_content_hash,
                     csv_delimiter: None, // Will be populated by inject_csv_delimiters in app.rs
+                    pdf_view_state: tab.pdf_view_state.as_ref().map(PdfPreviewState::to_snapshot),
                 }
             })
             .collect();
@@ -3942,6 +3976,7 @@ impl AppState {
                                 last_auto_save_content_hash: None,
                                 fold_state: FoldState::new(),
                                 split_ratio: 0.5,
+                                pdf_view_state: None,
                                 pipeline_state: TabPipelineState::default(),
                                 detected_encoding: Some(encoding),
                                 original_bytes: final_original_bytes,
@@ -3964,6 +3999,15 @@ impl AppState {
                 tab.view_mode = session_tab.view_mode;
                 tab.cursor_position = session_tab.cursor_position;
                 tab.scroll_offset = session_tab.scroll_offset;
+                if tab.file_type() == FileType::Pdf {
+                    tab.pdf_view_state = Some(
+                        session_tab
+                            .pdf_view_state
+                            .clone()
+                            .map(PdfPreviewState::from_snapshot)
+                            .unwrap_or_default(),
+                    );
+                }
 
                 // Restore cursor from char index
                 tab.cursors.set_single(crate::state::Selection::cursor(
@@ -5225,6 +5269,7 @@ mod tests {
             scroll_offset: 100.0,
             view_mode: ViewMode::Rendered, // Test restoring rendered mode
             split_ratio: 0.6,              // Test restoring split ratio
+            pdf_view_state: None,
         };
         let content = "# Test Content".to_string();
 
@@ -5261,6 +5306,7 @@ mod tests {
             scroll_offset: 0.0,
             view_mode: ViewMode::Raw,
             split_ratio: 0.5,
+            pdf_view_state: None,
         }];
 
         let state = AppState::with_settings(settings);
@@ -5281,6 +5327,7 @@ mod tests {
             scroll_offset: 50.0,
             view_mode: ViewMode::Raw,
             split_ratio: 0.5,
+            pdf_view_state: None,
         }];
 
         let state = AppState::with_settings(settings);
@@ -5328,6 +5375,7 @@ mod tests {
             scroll_offset: 25.0,
             view_mode: ViewMode::Rendered, // Test restoring view mode
             split_ratio: 0.5,
+            pdf_view_state: None,
         }];
         settings.active_tab_index = 0;
 
@@ -5374,6 +5422,7 @@ mod tests {
                 scroll_offset: 0.0,
                 view_mode: ViewMode::Raw, // First tab in raw mode
                 split_ratio: 0.5,
+                pdf_view_state: None,
             },
             TabInfo {
                 path: Some(temp_file2.clone()),
@@ -5382,6 +5431,7 @@ mod tests {
                 scroll_offset: 0.0,
                 view_mode: ViewMode::Rendered, // Second tab in rendered mode
                 split_ratio: 0.5,
+                pdf_view_state: None,
             },
         ];
         settings.active_tab_index = 1; // Second tab active
@@ -5423,6 +5473,7 @@ mod tests {
                 scroll_offset: 0.0,
                 view_mode: ViewMode::Raw,
                 split_ratio: 0.5,
+                pdf_view_state: None,
             },
             TabInfo {
                 path: Some(temp_file.clone()),
@@ -5431,6 +5482,7 @@ mod tests {
                 scroll_offset: 0.0,
                 view_mode: ViewMode::Rendered,
                 split_ratio: 0.5,
+                pdf_view_state: None,
             },
         ];
         settings.active_tab_index = 1;
@@ -5554,6 +5606,70 @@ mod tests {
         assert_eq!(tab.view_mode, ViewMode::Rendered);
         assert!(tab.content.is_empty());
         assert_eq!(tab.current_encoding, "binary");
+    }
+
+    #[test]
+    fn test_with_pdf_file_initializes_pdf_view_state() {
+        let tab = Tab::with_pdf_file(1, PathBuf::from("/tmp/doc.pdf"), false);
+        let pdf = tab.pdf_view_state.as_ref().expect("pdf state");
+        assert_eq!(pdf.current_page, 0);
+        assert_eq!(pdf.zoom, 1.0);
+        assert!(pdf.sidebar_visible);
+    }
+
+    #[test]
+    fn test_tab_to_tab_info_carries_pdf_view_state() {
+        let mut tab = Tab::with_pdf_file(1, PathBuf::from("/tmp/doc.pdf"), false);
+        let pdf = tab.pdf_view_state.as_mut().unwrap();
+        pdf.current_page = 11;
+        pdf.zoom = 1.5;
+        pdf.sidebar_visible = false;
+
+        let info = tab.to_tab_info();
+        let snapshot = info.pdf_view_state.expect("snapshot");
+        assert_eq!(snapshot.current_page, 11);
+        assert_eq!(snapshot.zoom_percent, 150);
+        assert!(!snapshot.sidebar_visible);
+    }
+
+    #[test]
+    fn test_restore_session_result_restores_pdf_view_state() {
+        use crate::config::{SessionRestoreResult, SessionState, SessionTabState};
+        use crate::preview::PdfViewStateSnapshot;
+        use std::io::Write;
+
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("ferrite_test_restore_pdf_state.pdf");
+        std::fs::File::create(&temp_file)
+            .unwrap()
+            .write_all(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF")
+            .unwrap();
+
+        let mut state = AppState::with_settings(Settings::default());
+        let mut session = SessionState::default();
+        session.tabs.push(SessionTabState {
+            tab_id: 99,
+            path: Some(temp_file.clone()),
+            display_title: "doc.pdf".to_string(),
+            view_mode: ViewMode::Rendered,
+            pdf_view_state: Some(PdfViewStateSnapshot {
+                current_page: 3,
+                zoom_percent: 125,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        let result = SessionRestoreResult {
+            session: Some(session),
+            ..Default::default()
+        };
+
+        state.restore_from_session_result(&result);
+        let _ = std::fs::remove_file(&temp_file);
+        let tab = state.active_tab().unwrap();
+        assert_eq!(tab.file_type(), FileType::Pdf);
+        assert_eq!(tab.pdf_view_state.as_ref().unwrap().current_page, 3);
     }
 
     #[test]

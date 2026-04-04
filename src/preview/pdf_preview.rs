@@ -11,6 +11,8 @@ use hayro::{render, RenderSettings};
 use std::path::Path;
 use std::sync::Arc;
 
+use super::pdf::{PdfScrollLayout, PdfSidebarMode, PdfSpreadMode, PdfViewStateSnapshot};
+
 const PAGE_GAP: f32 = 24.0;
 const VIEWPORT_BUFFER_PAGES: usize = 1;
 const PDF_SIDEBAR_WIDTH: f32 = 220.0;
@@ -18,27 +20,9 @@ const PDF_THUMBNAIL_WIDTH: f32 = 150.0;
 const PDF_THUMBNAIL_HEIGHT: f32 = 210.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PdfSpreadMode {
-    SinglePage,
-    TwoPageOdd,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PdfScrollLayout {
-    Vertical,
-    Horizontal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfMouseMode {
     Pan,
     Cursor,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PdfSidebarMode {
-    Thumbnails,
-    Outline,
 }
 
 /// Per-tab UI state for PDF preview.
@@ -64,6 +48,32 @@ impl Default for PdfPreviewState {
             scroll_layout: PdfScrollLayout::Vertical,
             sidebar_visible: true,
             sidebar_mode: PdfSidebarMode::Thumbnails,
+            mouse_mode: PdfMouseMode::Pan,
+        }
+    }
+}
+
+impl PdfPreviewState {
+    pub fn to_snapshot(&self) -> PdfViewStateSnapshot {
+        PdfViewStateSnapshot {
+            current_page: self.current_page,
+            zoom_percent: (self.zoom * 100.0).round() as u16,
+            spread_mode: self.spread_mode,
+            scroll_layout: self.scroll_layout,
+            sidebar_visible: self.sidebar_visible,
+            sidebar_mode: self.sidebar_mode,
+        }
+    }
+
+    pub fn from_snapshot(snapshot: PdfViewStateSnapshot) -> Self {
+        Self {
+            current_page: snapshot.current_page,
+            zoom: (snapshot.zoom_percent as f32 / 100.0).clamp(0.5, 4.0),
+            total_pages: None,
+            spread_mode: snapshot.spread_mode,
+            scroll_layout: snapshot.scroll_layout,
+            sidebar_visible: snapshot.sidebar_visible,
+            sidebar_mode: snapshot.sidebar_mode,
             mouse_mode: PdfMouseMode::Pan,
         }
     }
